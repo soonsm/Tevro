@@ -2,9 +2,10 @@
 
 - 문서 상태: 기술 검토 및 추천안. 기술 스택 채택이나 구현 완료를 의미하지 않음.
 - 작성 기준일: 2026-09-26
-- 관련 문서: [해결하려는 문제와 제품 요구사항](./product-requirements.md)
+- 개정일: 2026-10-07 — 외부 정보 재확인 결과 반영
+- 관련 문서: [해결하려는 문제와 제품 요구사항](./product-requirements.md), [착수 전 결정 기록(ADR)](./adr/README.md)
 - 목적: 공정 GUI 편집, DAG 배치·검증, Jira·Confluence 연동, CLI 구현에 활용할 기존 오픈소스를 정리하고 Tevro가 직접 구현할 부분을 구분한다.
-- 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다.
+- 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다. 2026-10-07에 버전·지원 기간·엔드포인트 등 공개 정보를 다시 확인해 반영했다. 이 재확인도 공개 자료 대조이며, 사내 설치·동작 검증은 여전히 아니다.
 
 > 그래프를 그리고 조작하는 기술은 기존 라이브러리를 활용한다. Tevro는 공정의 의미, 선행 조건, 템플릿 재사용, Jira 매핑과 상태의 일관성에 집중한다.
 
@@ -168,7 +169,23 @@ Tevro가 검증해야 할 기본 규칙은 다음과 같다.
 
 대상은 사용자가 설명한 사내 설치형 Jira 9.15.1이다. Cloud용 SDK와 Server/Data Center용 SDK를 구분하고, 실제 사이트의 에디션·인증·권한·필수 필드·링크 유형은 연동 전에 확인한다.
 
-예를 들어 `jira.js`는 공식 README에서 Cloud용 라이브러리로 설명하며 Server/Data Center를 지원하지 않는다고 안내한다. `Version2Client`라는 이름이 설치형 호환성을 보장하지는 않는다. 따라서 현재 사내 Jira의 1차 후보에서는 제외한다. [jira.js][jira-js]
+대상 버전의 지원 기간도 확인 대상이다. 2026-10-07에 공개 정보를 다시 확인한 결과는 다음과 같다.
+
+| 항목 | 확인 내용 | 출처 |
+| --- | --- | --- |
+| Jira Software 9.15 | 2026-03-27 지원 종료. 참고로 9.17은 2026-06-26, 10.3 LTS는 2026-12-05 지원 종료 | [Atlassian End of Support Policy][atlassian-eos] |
+| Jira Data Center 제품군 | 2029-03-28 EOL이며 이후 읽기 전용. 신규 구매는 2026-03-30에 종료, 기존 고객의 확장 구매는 2028-03-30까지 | [Data Center 제품 EOL 안내][jira-dc-eol] |
+
+대상 Jira 9.15.1은 작성 기준일 이전에 이미 지원이 끝난 버전이다. 사내 Jira가 10.x 이상으로 올라가면 SDK 후보와 인증 방식을 다시 검토해야 한다. Data Center로 계속 운영한다면 EOL 이후 읽기 전용이 되므로 이슈 생성·링크 같은 쓰기 연동의 수명도 그 시점까지로 제한된다. 따라서 사내 Jira의 업그레이드·이전 계획(대상 버전과 시점)을 연동 전 확인 항목에 포함한다. 이 사실이 Jira 연동을 선택 기능으로 두는 범위나 SDK를 어댑터 뒤로 숨기는 원칙(§6.3)을 바꾸지는 않는다.
+
+예를 들어 `jira.js`는 공식 README에서 Cloud용 라이브러리로 설명하며 Server/Data Center를 지원하지 않는다고 안내한다. 2026-10-07 기준 최신 안정판 6.2.0(2026-08-24)의 README도 같은 설명을 유지하므로, 이 서술은 안정판 기준으로 유효하다. 6.x에서는 `Version2Client`와 `Version3Client`가 제거되었다. 따라서 현재 사내 Jira의 1차 후보에서는 제외한다. [jira.js][jira-js], [jira.js npm 메타데이터][jira-js-npm]
+
+다음 판에서는 지원 범위가 넓어질 예정이다. 저장소 기본 브랜치 README는 6.3부터 `createServerClient`로 자체 호스팅 Jira 10.0 이상을 지원하고 Jira 9.x는 지원하지 않는다고 안내한다. 6.3은 2026-10-07 현재 RC(6.3.0-rc.1, 2026-09-29) 단계다. 6.x는 ESM 전용이며 Node.js 22 이상을 요구한다.
+
+| 조건 | `jira.js` 판단 |
+| --- | --- |
+| 사내 Jira 9.15.1(현재 대상) | 6.3 이후에도 9.x 미지원이므로 계속 제외 |
+| 사내 Jira가 10.0 이상으로 업그레이드 | 6.3 이상 정식판을 기준으로 TypeScript 서버의 SDK 후보로 재평가 |
 
 ### 6.2 SDK 후보
 
@@ -176,30 +193,41 @@ Tevro가 검증해야 할 기본 규칙은 다음과 같다.
 | --- | --- | --- | --- |
 | `atlassian-python-api` | Python | Apache-2.0 | Jira·Confluence 등 여러 Atlassian 제품의 래퍼. 설치형과 Cloud를 구분하여 지원하므로 Python 서버라면 우선 검토 |
 | `pycontribs/jira` | Python | BSD-2-Clause | Jira 전용 라이브러리. Cloud 및 Server/Data Center 지원을 목표로 하므로 Jira 중심 대안 |
-| `jira-client` | Node.js | MIT | 이슈 생성·조회·링크 생성 등의 래퍼. 신규 채택 전 릴리스·의존성 유지보수와 현재 런타임·인증 호환성을 특히 확인 |
+| `jira-client` | Node.js | MIT | 이슈 생성·조회·링크 생성 등의 래퍼. npm 최신판 8.2.2(2022-11-03) 이후 릴리스가 없고, 저장소 기본 브랜치의 마지막 커밋도 같은 날의 릴리스 커밋이다(2026-10-07 확인). HTTP 계층은 `postman-request`에 의존한다. 사실상 유지보수가 멈춘 상태로 보이므로 신규 채택은 권장하지 않음 |
 
-근거: [atlassian-python-api 저장소][atlassian-python], [Jira 기능 문서][python-jira-docs], [pycontribs/jira][pycontribs-jira], [jira-client][jira-client].
+근거: [atlassian-python-api 저장소][atlassian-python], [Jira 기능 문서][python-jira-docs], [pycontribs/jira][pycontribs-jira], [jira-client][jira-client], [jira-client npm 메타데이터][jira-client-npm].
 
 일반적인 설치형 지원이 정확히 사내 Jira 9.15.1의 모든 설정과 호환된다는 의미는 아니다. 실제 사이트의 생성 화면 필수 필드와 계정 권한을 포함해 테스트한다.
 
 ### 6.3 TypeScript 서버라면 작은 REST 어댑터도 적절
 
-Tevro가 초기부터 Jira API 전체를 사용할 필요는 없다. 이슈 생성과 이슈 간 링크 생성은 공식 REST API로 제공되므로, 필요한 범위만 호출하는 어댑터도 합리적인 선택이다. [Jira 이슈 생성 API 예제][jira-create], [Jira 이슈 링크 API][jira-link-api]
+Tevro가 초기부터 Jira API 전체를 사용할 필요는 없다. 이슈 생성과 이슈 간 링크 생성은 공식 REST API로 제공되므로, 필요한 범위만 호출하는 어댑터도 합리적인 선택이다. Jira 9.15.1 REST 문서에서도 `POST /rest/api/2/issue`(단건 생성), `POST /rest/api/2/issue/bulk`(일괄 생성), `POST /rest/api/2/issueLink`, `GET /rest/api/2/issueLinkType`을 확인할 수 있다. [Jira 이슈 생성 API 예제][jira-create], [Jira 이슈 링크 API][jira-link-api], [Jira 9.15.1 REST 문서][jira-rest-9151]
+
+TypeScript 서버에서 Jira 9.x를 대상으로 하면 유지보수 중인 Node.js SDK는 사실상 없다. `jira.js`는 9.x를 지원하지 않고(§6.1), `jira-client`는 2022-11 이후 릴리스가 없다(§6.2). 따라서 이 조건에서는 작은 REST 어댑터가 현실적인 기본안이라고 제안한다. 서버 언어와 Jira 연동 방식은 아직 정하지 않았다. 서버 언어 결정은 [ADR-0001](./adr/0001-tech-stack.md)에서 다룬다.
 
 ```text
 JiraAdapter — 개념 인터페이스, 최종 메서드 명세 아님
   ├─ 연결·권한 확인
-  ├─ 프로젝트·이슈 유형·필수 필드 조회
+  ├─ 프로젝트·이슈 유형·필수 필드 조회 (Jira 9.x에서는 아래 대체 엔드포인트 사용)
   ├─ 이슈 생성
   ├─ 이슈 상태 조회
   ├─ 링크 유형 조회
   └─ 이슈 간 링크 생성
 ```
 
+어댑터를 설계할 때 대상 버전에서 확인할 사항은 다음과 같다. 2026-10-07에 공개 문서로 확인한 내용이며 사내 Jira에서 호출해 본 결과는 아니다.
+
+| 항목 | 확인 내용 | 설계 시 고려 |
+| --- | --- | --- |
+| 이슈 유형·필수 필드 조회 | 위 이슈 생성 예제가 쓰는 구 createmeta 방식(`GET /rest/api/2/issue/createmeta?projectKeys=…&expand=projects.issuetypes.fields`)은 Jira 9.0에서 제거되었다. 9.15.1 REST 문서에는 대체 엔드포인트 `GET /rest/api/2/issue/createmeta/{projectIdOrKey}/issuetypes`와 `GET /rest/api/2/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}`가 있다 | 대체 엔드포인트를 사용하고 `startAt`·`maxResults` 페이지네이션을 처리한다. 생성 전 필수 필드 확인(F-J07)과 일괄 생성(F-J05, F-J06)의 전제다 |
+| 인증 | 위 예제는 기본 인증(`curl -u`)을 쓴다. 개인 액세스 토큰은 Jira Server/Data Center 8.14 이상에서 제공되며 `Authorization: Bearer` 헤더로 전달한다 | 개인 액세스 토큰을 우선 검토한다. 사내 Jira에서 기본 인증이 허용되는지는 확인 항목으로 둔다 |
+
+출처: [createmeta REST 엔드포인트 제거 안내][jira-createmeta-removal], [Jira 9.15.1 REST 문서][jira-rest-9151], [Jira 개인 액세스 토큰 사용 안내][jira-pat].
+
 권장 선택 원칙은 다음과 같다.
 
 - Python 서버를 선택했다면 `atlassian-python-api` 또는 `pycontribs/jira`를 비교한다.
-- TypeScript 서버라면 작은 REST 어댑터와 검증된 Node.js SDK를 비교한다.
+- TypeScript 서버라면 작은 REST 어댑터와 검증된 Node.js SDK를 비교한다. 대상이 Jira 9.x인 동안은 비교할 SDK가 사실상 없으므로 REST 어댑터를 기본안으로 검토한다. 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판과 비교한다.
 - Jira SDK 하나를 사용하기 위해 별도 언어의 실행환경을 추가하지 않는다.
 - SDK 선택과 관계없이 인증·요청·응답 처리는 어댑터 뒤로 숨기고, 공정·템플릿 규칙이 SDK의 객체 구조에 직접 의존하지 않게 한다.
 
@@ -248,6 +276,15 @@ Jira 이슈에 외부 페이지 링크를 달아주는 경우에는 Jira Remote 
 - 공식 저장소: [Commander.js][commander]
 
 명령·하위 명령, 옵션과 인자 해석, 필수 입력, 도움말, 사용 오류 처리에 활용한다. 구조화된 업무 결과, 서버 통신, 권한 검사, 도메인 오류 해석은 Tevro에서 구현한다. [Commander.js][commander]
+
+주 버전에 따라 실행 조건이 다르다. 2026-10-07 확인 기준은 다음과 같다. [Commander.js CHANGELOG][commander-changelog]
+
+| 주 버전 | 조건 |
+| --- | --- |
+| 15.x (15.0.0, 2026-05-29) | ESM 전용. Node.js 22.12.0 이상 필요 |
+| 14.x | 2027-05까지 보안 업데이트 제공 |
+
+현재 지원되는 Node.js LTS 계열(22.12.0 이상의 22, 24)은 15.x의 조건을 충족한다. 20 계열은 2026-04-30에 지원이 끝났다. [Node.js 릴리스 일정][node-release] 따라서 이 변경이 Commander.js 후보 판단을 바꾸지는 않는다. 영향은 CLI를 실행할 호스트의 Node.js 버전과 CLI 배포 형태(Node 패키지 또는 런타임을 포함한 단일 실행 파일) 결정 수준이며, 이 결정은 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다. 채택할 주 버전은 아직 정하지 않았다.
 
 ```sh
 # 문법 예시이며 최종 CLI 계약이나 실행 가능한 구현을 의미하지 않음
@@ -334,6 +371,7 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 
 - JavaScript·CSS·폰트·아이콘 등 실행 자산을 배포물에 포함하고 외부 CDN을 필수로 사용하지 않는다.
 - 선택한 버전과 의존성을 고정하고, 내부 패키지 저장소 또는 반입 절차로 재현 가능한 설치 경로를 마련한다.
+- CLI를 실행할 호스트(개발자 PC, AI 에이전트 실행 환경)의 Node.js 버전이 채택한 CLI 의존성의 요구 조건(예: Commander.js 15.x의 Node.js 22.12.0 이상)을 충족하는지 확인한다. 충족하지 않으면 런타임을 포함한 단일 실행 파일 번들을 검토한다. 결정은 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다.
 - ELK.js Worker를 사용한다면 Worker 스크립트도 내부 배포 경로에서 제공한다. [ELK.js][elk]
 - 외부 인증, 외부 라이선스 확인, 원격 텔레메트리 등의 실행 의존성이 있는지는 실제 배포 조합에서 점검한다.
 - Jira 인증정보는 브라우저 번들, CLI의 일반 출력, 프로젝트 JSON에 포함하지 않는다.
@@ -349,14 +387,14 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 
 | 검증 대상 | 확인할 결과 | 관련 요구사항 |
 | --- | --- | --- |
-| GUI 편집 | 제목·상태·링크 조작과 노드 드래그가 충돌하지 않음 | F-P03~F-P05, F-G03 |
+| GUI 편집 | 제목·상태·링크 조작과 노드 드래그가 충돌하지 않음 | F-P03~F-P05, F-S02, F-M01, F-G04 |
 | 전체 그래프 | 완료한 공정과 독립 공정 D도 표시 | F-G01 |
 | 연결 생성 | 다중 선행관계와 방향이 명확하고 수정·삭제 가능 | F-D01~F-D03 |
 | 순환 방지 | C → A 추가 시 GUI와 CLI 모두 서버에서 거부 | F-D04, F-D06 |
 | 선행 조건 | C에 B 미완료를 표시하되 C의 진행 상태 변경은 차단하지 않음 | F-S03, F-S04 |
 | 자동 배치 | 카드 크기·긴 제목을 고려하고 수동 위치와 자동 정렬을 구분 | F-G05 |
 | 템플릿 | 두 프로젝트의 새 ID·관계·상태·Jira 매핑이 독립적 | F-T04~F-T08 |
-| Jira 시험 연동 | 시험용 이슈 생성·링크 방향·상태 조회를 확인하고 부분 실패 표시 | F-J05~F-J14 |
+| Jira 시험 연동 | 시험용 이슈 생성·링크 방향·상태 조회를 확인하고 부분 실패 표시 | F-J01, F-J05~F-J14 |
 | GUI·CLI 일치 | 같은 공정 ID와 저장 결과를 양쪽에서 확인 | F-C01, F-C04, F-C08 |
 | 폐쇄망 | 외부 인터넷 없이 기본 기능이 동작 | N-01~N-03 |
 
@@ -368,11 +406,13 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 
 **Jira는 서버 언어를 정한 다음 SDK와 작은 REST 어댑터 중 선택한다.** 설치형 Jira 지원과 실제 사내 설정에서의 동작을 먼저 확인한다. Confluence는 현재 요구대로 링크 저장부터 시작한다.
 
-아직 결정하지 않은 사항은 서버·DB·인증 방식, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책, Jira SDK 및 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시하며, 기존 제품 요구사항의 기능 범위를 임의로 확대하거나 기술 선택을 확정하지 않는다.
+아직 결정하지 않은 사항은 프런트엔드 프레임워크, 서버·DB·인증 방식, CLI 런타임과 배포 형태, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책, Jira SDK 및 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시하며, 기존 제품 요구사항의 기능 범위를 임의로 확대하거나 기술 선택을 확정하지 않는다.
+
+착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 제안 상태로 정리되어 있다. 프런트엔드·서버·CLI 기술 구성은 [ADR-0001](./adr/0001-tech-stack.md), 폐쇄망 배포 형태는 [ADR-0002](./adr/0002-deployment-packaging.md), 저장소와 동시 수정은 [ADR-0003](./adr/0003-storage-and-concurrency.md), 인증·권한은 [ADR-0004](./adr/0004-authentication-authorization.md), CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다. 제안 상태의 ADR은 채택된 결정이 아니다.
 
 ## 14. 참고 자료
 
-아래 링크는 앞선 검토에 사용한 공식 문서와 프로젝트 저장소다. 기능과 라이선스는 실제 채택할 릴리스 기준으로 다시 확인한다.
+아래 링크는 앞선 검토에 사용한 공식 문서와 프로젝트 저장소다. 2026-10-07 재확인에서 추가한 출처도 함께 둔다. 기능과 라이선스는 실제 채택할 릴리스 기준으로 다시 확인한다.
 
 ### GUI 및 그래프
 
@@ -401,11 +441,20 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 - [atlassian-python-api Confluence 문서][python-confluence-docs]
 - [pycontribs/jira 저장소][pycontribs-jira]
 - [jira-client 저장소][jira-client]
-- [jira.js 저장소 — Cloud 지원 범위 확인][jira-js]
-- [Atlassian Jira 이슈 생성 API 예제][jira-create]
+- [jira-client npm 메타데이터 — 최신판·게시일 확인][jira-client-npm]
+- [jira.js 저장소 — Cloud·자체 호스팅 지원 범위 확인][jira-js]
+- [jira.js npm 메타데이터 — 안정판·RC 버전과 실행 조건 확인][jira-js-npm]
+- [Atlassian End of Support Policy][atlassian-eos]
+- [Atlassian Data Center 제품 EOL 안내][jira-dc-eol]
+- [Atlassian Jira 이슈 생성 API 예제 — createmeta 부분은 Jira 9.0에서 제거됨][jira-create]
+- [Atlassian Jira createmeta REST 엔드포인트 제거 안내][jira-createmeta-removal]
+- [Atlassian Jira 9.15.1 REST API 문서][jira-rest-9151]
+- [Atlassian Jira 개인 액세스 토큰 사용 안내][jira-pat]
 - [Atlassian Jira 이슈 링크 API — 사내 버전과 별도 대조 필요][jira-link-api]
 - [Atlassian Jira Remote Link 안내][jira-remote-link]
 - [Commander.js 저장소][commander]
+- [Commander.js CHANGELOG][commander-changelog]
+- [Node.js 릴리스 일정][node-release]
 
 [svelte-flow]: https://svelteflow.dev/
 [svelte-custom]: https://svelteflow.dev/learn/customization/custom-nodes
@@ -429,8 +478,17 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 [python-confluence-docs]: https://atlassian-python-api.readthedocs.io/confluence.html
 [pycontribs-jira]: https://github.com/pycontribs/jira
 [jira-client]: https://github.com/jira-node/node-jira-client
+[jira-client-npm]: https://registry.npmjs.org/jira-client
 [jira-js]: https://github.com/MrRefactoring/jira.js
+[jira-js-npm]: https://registry.npmjs.org/jira.js
+[atlassian-eos]: https://confluence.atlassian.com/support/atlassian-end-of-support-policy-201851003.html
+[jira-dc-eol]: https://www.atlassian.com/licensing/data-center-end-of-life
 [jira-create]: https://developer.atlassian.com/server/jira/platform/jira-rest-api-example-create-issue-7897248/
+[jira-createmeta-removal]: https://confluence.atlassian.com/jiracore/createmeta-rest-endpoint-to-be-removed-975040986.html
+[jira-rest-9151]: https://docs.atlassian.com/software/jira/docs/api/REST/9.15.1/
+[jira-pat]: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
 [jira-link-api]: https://developer.atlassian.com/server/jira/platform/rest/v11000/api-group-issuelink/
 [jira-remote-link]: https://support.atlassian.com/jira/kb/how-to-use-rest-api-to-add-remote-links-in-jira-issues/
 [commander]: https://github.com/tj/commander.js
+[commander-changelog]: https://github.com/tj/commander.js/blob/master/CHANGELOG.md
+[node-release]: https://github.com/nodejs/Release
