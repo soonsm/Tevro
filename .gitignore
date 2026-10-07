@@ -1,0 +1,7 @@
+# macOS
+.DS_Store
+
+# Obsidian: 개인별 화면 상태와 휴지통
+**/.obsidian/workspace.json
+**/.obsidian/workspace-mobile.json
+.trash/
