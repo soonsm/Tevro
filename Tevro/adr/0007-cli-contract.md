@@ -2,9 +2,10 @@
 
 - 상태: 제안 (Proposed)
 - 작성일: 2026-10-07
+- 개정: 2026-10-07 공정 계층 요구 반영
 - 결정권자: 미정 — 프로젝트 담당자가 지정
 - 관련 문서:
-  - PRD: [제품 요구사항](../product-requirements.md) §3.2 원칙 7, §6.8 F-C01~F-C10, '명령 체계 예시 — 미확정'과 마지막 문장, §8 N-03·N-08, §10 AC-13·AC-14·AC-17·AC-19·AC-20, §11 표 아래 문단, §13-10
+  - PRD: [제품 요구사항](../product-requirements.md) §3.2 원칙 7, §6.8 F-C01~F-C10, '명령 체계 예시 — 미확정'과 마지막 문장, §6.9 F-H11, §8 N-03·N-08, §10 AC-13·AC-14·AC-17·AC-19·AC-20·AC-27·AC-31·AC-32, §11 표 아래 문단, §13-10
   - OSS: [오픈소스와 구현 경계](../open-source-components.md) §8.1, §8.2, §11.2
   - 선행 ADR: [ADR-0006](./0006-server-api-contract.md), [ADR-0004](./0004-authentication-authorization.md)
   - 관련 ADR: [ADR-0001](./0001-tech-stack.md)(CLI 런타임), [ADR-0002](./0002-deployment-packaging.md)(반입 경로), [ADR-0003](./0003-storage-and-concurrency.md)(충돌), [ADR-0005](./0005-identifiers-and-deletion.md)(식별자·삭제)
@@ -41,16 +42,19 @@ PRD §6.8 예시의 명사(`project`, `task`, `dependency`, `graph`)와 동사 �
 | 명령 | 서버 호출(ADR-0006) | 비고 |
 | --- | --- | --- |
 | `project create`·`list`·`show`·`update` | 프로젝트 API | |
-| `task add`·`list`·`show`·`update`·`status` | 공정 API | `update`·`status`는 `--expected-version` 선택 |
-| `task delete <task-id>` | 변경 묶음 | `--yes` 필요. `--dry-run`으로 영향 확인. `--expected-revision` 선택. `--reconnect`는 끊기는 선후 경로를 다시 잇는 선택 옵션(ADR-0005, 결정 필요). 변경 묶음 경로에 필요한 프로젝트는 `GET /api/v1/tasks/{taskId}`로 찾는다. 이때 `NOT_FOUND`면 종료 코드 6으로 끝낸다 |
-| `dependency add`·`remove` | 연결 API | (선행, 후속) 공정 쌍으로 지정 |
-| `graph show` | 그래프 조회 | |
+| `task add`·`list`·`show`·`update`·`status` | 공정 API | `update`·`status`는 `--expected-version` 선택. `add --parent <task-id>`로 상위 공정을 지정한다(F-H01, AC-31). `list --parent <task-id>`는 그 상위의 직접 하위만, `--depth <n>`은 n층까지 보여 준다. 둘 다 없으면 프로젝트의 모든 공정을 평면으로 보여 주고 각 항목에 `parentId`가 있다. `status`의 결과에는 자동으로 바뀐 상위 목록이 포함된다(ADR-0006 §8) |
+| `task move <task-id> --parent <task-id>` | 변경 묶음(`task.move`) | 상위를 바꾼다(F-H08). `--expected-revision` 선택. 연결이 남아 있으면 종료 코드 3과 `HAS_DEPENDENCIES`. `--dry-run`은 같은 오류와 함께 끊어야 할 연결 목록을 보여 준다(AC-32). 데이터를 지우지 않으므로 `--yes`는 필요 없다. 최상위로 올리는 표기(예: `--top`)는 구현 시 확정 |
+| `task delete <task-id>` | 변경 묶음 | `--yes` 필요. `--dry-run`으로 영향 확인. `--expected-revision` 선택. `--reconnect`는 끊기는 선후 경로를 다시 잇는 선택 옵션(ADR-0005, 결정 필요). 하위가 있으면 미리 보기에 자손 수와 자손의 연결 수가 포함된다(ADR-0005). 변경 묶음 경로에 필요한 프로젝트는 `GET /api/v1/tasks/{taskId}`로 찾는다. 이때 `NOT_FOUND`면 종료 코드 6으로 끝낸다 |
+| `dependency add`·`remove` | 연결 API | (선행, 후속) 공정 쌍으로 지정. 두 공정의 상위가 다르면 `CROSS_LEVEL_DEPENDENCY`로 거부된다(AC-27) |
+| `graph show --project <id> [--root <task-id>]` | 그래프 조회 | `--root`는 그 상위 안의 층(직접 하위와 그 사이 연결)만 보여 준다. 없으면 전체 그래프이며 층 구성은 `parentId`로 한다. `--json`에는 공정별 `parentId`·`childCount`·`doneChildCount`가 있다(F-H07, F-H11) |
 | `graph apply --project <id> --file <파일>` | 변경 묶음 | `--dry-run`, `--expected-revision` 선택. 삭제 작업이 있으면 `--yes` 필요 |
 | `graph validate --project <id> [--file <파일>]` | 변경 묶음 dry-run 또는 무결성 검사 | ADR-0006 §5 정의를 따름 |
 | `config set-token --stdin`, `config show` | 로컬 설정 | `config show`는 토큰 값을 출력하지 않음 |
 | `version` | 버전 확인 | CLI 버전, 출력 스키마 버전, 서버 API 버전 |
 
 템플릿 명령은 재사용 단계, Jira 명령은 Jira 단계에서 정한다. 템플릿 편집에 별도 명령을 둘지 공통 공정 명령에 대상을 지정할지(§6.8 마지막 문장)는 재사용 단계로 이월한다. 실행 상태 값의 표기(예시의 `in-progress`)는 후속 ADR 후보 '실행 상태·선행 조건 판정 모델'에서 정한다([README](./README.md)).
+
+계층 명령(`--parent`, `task move`, `--depth`, `--root`)의 문법도 예시이며 최종 문법이 아니다(PRD §6.9 F-H11). 연결 제거와 이동을 한 명령으로 묶는 옵션(예: `task move --detach`, 연결을 지우므로 `--yes` 필요)을 둘지는 결정 필요다. 두지 않으면 `graph apply --file`에 `dependency.remove`와 `task.move`를 함께 담는다(ADR-0006 §4).
 
 ### 2. 구조화 출력: `--json` = API DTO + `schemaVersion`
 
@@ -59,6 +63,7 @@ PRD §6.8 예시의 명사(`project`, `task`, `dependency`, `graph`)와 동사 �
 - 실패하면 stdout에는 아무것도 쓰지 않는다. `--json`이면 stderr에 `{"schemaVersion": 1, "error": {code, message, details, requestId}}`를 쓴다.
 - 진행 상황, 경고, 사람이 읽는 진단은 모두 stderr로 보낸다. stdout에는 데이터만 둔다.
 - `schemaVersion`은 정수다. 필드 추가는 같은 버전에서 허용하고, 제거·의미 변경 때만 올린다. 사용자는 모르는 필드를 무시한다.
+- 공정 DTO에는 `parentId`(최상위면 `null`), `childCount`, `doneChildCount`가 있다. 상태 변경 결과에는 자동으로 바뀐 상위 목록 `autoTransitions`가 있다(ADR-0006 §8). CLI는 이 필드를 더하거나 빼지 않는다(F-H11).
 - `--json` 없는 사람용 출력은 계약이 아니다. 형식을 바꿀 수 있다.
 
 ### 3. 종료 코드
@@ -70,7 +75,7 @@ PRD §6.8 예시의 명사(`project`, `task`, `dependency`, `graph`)와 동사 �
 | 0 | 성공 | dry-run 검증 통과 포함. `warnings`가 있어도 0 |
 | 1 | 기타 오류 | `INTERNAL`, `CLIENT_VERSION_UNSUPPORTED`, 서버 연결 실패·TLS 검증 실패(CLI 진단) |
 | 2 | 사용법 오류·입력 누락 | 서버 호출 전 CLI가 찾은 오류: 알 수 없는 옵션, 필수 인자 누락. 그리고 파괴적 변경의 `--yes` 누락(서버 dry-run으로 영향을 보여 준 뒤 종료, §4) |
-| 3 | 검증 실패 | `VALIDATION_INPUT`, `VALIDATION_SELF_LOOP`, `VALIDATION_DUPLICATE_EDGE`, `VALIDATION_CYCLE`, `REFERENCE_NOT_FOUND`, `CROSS_PROJECT_REFERENCE` |
+| 3 | 검증 실패 | `VALIDATION_INPUT`, `VALIDATION_SELF_LOOP`, `VALIDATION_DUPLICATE_EDGE`, `VALIDATION_CYCLE`, `REFERENCE_NOT_FOUND`, `CROSS_PROJECT_REFERENCE`, `HIERARCHY_CYCLE`, `CROSS_LEVEL_DEPENDENCY`, `HAS_DEPENDENCIES` |
 | 4 | 인증·권한 | `UNAUTHENTICATED`, `FORBIDDEN`, 인증값을 찾지 못하거나 토큰 파일 권한이 너무 넓음(CLI 진단) |
 | 5 | 동시 수정 충돌 | `CONFLICT`(AC-17) |
 | 6 | 대상 없음 | `NOT_FOUND` |
@@ -87,6 +92,7 @@ PRD §6.8 예시의 명사(`project`, `task`, `dependency`, `graph`)와 동사 �
 - 데이터를 지우는 명령(`delete`, `remove`)과 삭제 작업을 포함한 `graph apply`는 `--yes`가 있어야 실행한다. `--yes`가 없으면 아무것도 바꾸지 않고, 서버 dry-run(ADR-0006 §4)으로 얻은 영향 미리 보기를 stderr에 쓴 뒤 종료 코드 2로 끝낸다. 그 dry-run이 오류로 끝나면 그 오류의 종료 코드를 따른다(§3). `dependency remove`를 이 규칙에서 뺄지는 결정 필요.
 - 영향이 큰 작업은 `--dry-run`을 제공한다. 기계가 읽을 미리 보기가 필요하면 `--dry-run --json`을 쓴다. 성공하면 stdout에 결과를 쓰고 종료 코드 0이다. 실패하면 stderr에 오류를 쓰고(§2), 종료 코드는 실제 실행과 같은 오류 코드 매핑(§3)을 따른다. 예를 들어 검증 실패는 3, `--expected-revision` 불일치는 5, 대상 없음은 6, 인증 실패는 4다. `--dry-run`에는 `--yes`가 필요 없다.
 - dry-run 결과의 `baseGraphRevision`을 실제 실행의 `--expected-revision`으로 넘기면, 그 사이 구조가 바뀐 경우 종료 코드 5로 거부된다(ADR-0006 §4, F-C07).
+- `task move`는 데이터를 지우지 않으므로 `--yes` 없이 실행한다. 연결이 남아 있으면 서버가 `HAS_DEPENDENCIES`로 거부하고 종료 코드 3이다. `--dry-run`이면 같은 오류를 stderr(`--json`이면 `error.details.errors[].dependencies`)에 쓴다. 사용자는 연결을 지운 뒤 다시 실행하거나, `graph apply`로 제거와 이동을 한 묶음에 담는다(AC-32).
 - 조회 명령(`list`, `show`, `graph show`, `graph validate`)은 데이터를 바꾸지 않는다(F-C06).
 
 ### 5. 서버 주소·인증값·사내 CA
@@ -179,6 +185,7 @@ CLI 호스트의 Node.js가 22.12.0 이상임이 확인되거나 CLI 배포 선�
 - 에이전트가 종료 코드만으로 실패 종류를 구분할 수 있다(F-C05).
 - dry-run과 실제 실행을 리비전으로 안전하게 이을 수 있다(F-C07, AC-19).
 - GUI와 CLI가 같은 DTO를 보므로 AC-13 시험이 단순해진다.
+- `--parent`·`task move`·`--root`가 서버 계약의 필드와 작업에 그대로 대응하므로 AC-27·AC-31·AC-32를 GUI와 같은 서버 판정으로 시험한다.
 
 어려워지는 것:
 
@@ -201,14 +208,15 @@ CLI 호스트의 Node.js가 22.12.0 이상임이 확인되거나 CLI 배포 선�
 | 에이전트가 오류를 stdout과 stderr 중 어디서 읽기를 선호하는지 | 에이전트 사용 담당 |
 | 서버 연결 실패를 별도 종료 코드로 둘지 | 에이전트 사용 담당 |
 | `dependency remove`에도 `--yes`를 요구할지 | 프로젝트 담당자 |
+| `task move`에 연결 제거를 묶는 옵션(`--detach`)을 둘지, 최상위로 올리는 표기 | 프로젝트 담당자, 에이전트 사용 담당 |
 | 사내 CA 파일 배포 방식(호스트에 설치되어 있는지) | 사내 보안·인프라 담당 |
 
 ## 후속 작업
 
 - [ ] 종료 코드 표와 ADR-0006 오류 코드 표를 하나의 원천에서 생성하거나 시험으로 일치를 확인한다.
-- [ ] `--json` 출력 스키마를 OpenAPI DTO에서 그대로 쓰도록 CLI 구조를 잡는다.
+- [ ] `--json` 출력 스키마를 OpenAPI DTO에서 그대로 쓰도록 CLI 구조를 잡는다. 계층 필드(`parentId`, `childCount`, `doneChildCount`, `autoTransitions`)를 포함한다.
 - [ ] 설정 우선순위, 토큰 파일 권한 검사, `--ca-file` 동작을 구현·시험한다.
-- [ ] AC-17(충돌 시 종료 코드 5), AC-19(dry-run 무변경), AC-20(인증값 비노출) CLI 시험을 만든다.
+- [ ] AC-17(충돌 시 종료 코드 5), AC-19(dry-run 무변경), AC-20(인증값 비노출), AC-27(다른 층 연결 거부), AC-31(`--parent` 생성), AC-32(`task move` 미리 보기) CLI 시험을 만든다.
 - [ ] CLI 호스트 확인 후 배포 선택지 A 또는 B를 고른다. B라면 SEA 스파이크를 한다.
 - [ ] Commander.js 주 버전을 정하고 고정한다.
 - [ ] 채택하면 PRD §13-10과 §6.8 '명령 체계 예시'의 비고를 갱신한다.

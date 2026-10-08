@@ -2,9 +2,10 @@
 
 - 상태: 제안 (Proposed)
 - 작성일: 2026-10-07
+- 개정: 2026-10-07 공정 계층 요구 반영
 - 결정권자: 미정 — 프로젝트 담당자가 지정
 - 관련 문서:
-  - PRD: [제품 요구사항](../product-requirements.md) §3.2 원칙 7, §6.2 F-D04·F-D06, §6.8 F-C01·F-C08, §8 N-02·N-03과 마지막 문단, §11 초기 핵심, §13-1
+  - PRD: [제품 요구사항](../product-requirements.md) §3.2 원칙 7, §6.2 F-D04·F-D06, §6.8 F-C01·F-C08, §6.9 F-H07, §8 N-02·N-03과 마지막 문단, §11 초기 핵심, §13-1
   - OSS: [오픈소스와 구현 경계](../open-source-components.md) §1, §3.1~§3.2, §5.1~§5.2, §6.1~§6.3, §8.1, §11.1, §13
   - 선행 ADR: 없음
   - 후속 ADR: [ADR-0002](./0002-deployment-packaging.md), [ADR-0003](./0003-storage-and-concurrency.md), [ADR-0004](./0004-authentication-authorization.md), [ADR-0006](./0006-server-api-contract.md), [ADR-0007](./0007-cli-contract.md)
@@ -125,6 +126,8 @@ SvelteKit 문서는 SPA 모드의 단점으로 첫 화면 표시 지연, 검색 
 | 팀 숙련도 | OSS §3.2가 '익숙한 Svelte'로 언급. 팀 전체는 확인 필요 | 확인 필요 |
 
 Svelte를 제안한다. OSS 1차 추천 조합과 같고, 문서상 익숙한 프레임워크로 언급되어 있기 때문이다. 숙련도 확인 결과 팀의 React 경험이 압도적이면 React로 바꾸는 것이 합리적이다. 이 경우 그래프 라이브러리만 React Flow로 바뀌고 나머지 제안은 유지된다(OSS §13).
+
+공정 계층(PRD §6.9 F-H07)을 표시할 하위 흐름(`parentId`) 지원은 채택 전 확인 항목이다(OSS §3.1). 공식 문서로 기능은 확인했지만, 접기·펼치기와 하위 개수·완료 수 표시는 라이브러리가 아니라 Tevro가 구현하고, 깊은 중첩의 동작은 스파이크에서 본다([README 스파이크 시나리오](./README.md)).
 
 ## 트레이드오프
 
