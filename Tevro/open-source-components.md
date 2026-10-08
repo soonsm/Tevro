@@ -1,9 +1,10 @@
 # Tevro — 활용 가능한 오픈소스와 구현 경계
 
-- 문서 상태: 기술 검토 및 추천안. 이 문서 자체는 기술 스택 채택이나 구현 완료를 의미하지 않음. 채택된 결정은 ADR에 기록하며, 현재 채택 상태인 것은 ADR-0001이다.
+- 문서 상태: 기술 검토 및 추천안. 이 문서 자체는 기술 스택 채택이나 구현 완료를 의미하지 않음. 채택된 결정은 ADR에 기록하며, 현재 채택 상태인 것은 ADR-0001과 ADR-0002다.
 - 작성 기준일: 2026-09-26
 - 개정일: 2026-10-07 — 외부 정보 재확인 결과 반영, 공정 계층 요구 반영
 - 개정일: 2026-10-08 — ADR-0001 채택(TypeScript 단일, React SPA, Node 26) 반영
+- 개정일: 2026-10-08 — ADR-0002 채택(Node.js 동봉 압축 파일 + systemd) 반영
 - 관련 문서: [해결하려는 문제와 제품 요구사항](./product-requirements.md), [착수 전 결정 기록(ADR)](./adr/README.md)
 - 목적: 공정 GUI 편집, DAG 배치·검증, Jira·Confluence 연동, CLI 구현에 활용할 기존 오픈소스를 정리하고 Tevro가 직접 구현할 부분을 구분한다.
 - 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다. 2026-10-07에 버전·지원 기간·엔드포인트 등 공개 정보를 다시 확인해 반영했다. 이 재확인도 공개 자료 대조이며, 사내 설치·동작 검증은 여전히 아니다. 2026-10-08에는 ADR-0001 채택에 맞춰 React Flow·React·Vite의 공개 정보(npm 메타데이터, 공식 문서·예제 페이지, Pro 라이선스)를 확인해 반영했다. 이것도 공개 자료 대조다.
@@ -411,7 +412,7 @@ Jira 일괄 생성처럼 외부 데이터를 만드는 명령에는 미리 보�
 
 ## 9. 권장 연결 구조와 데이터 경계
 
-아래 구조는 역할 분리를 설명하는 제안이다. 서버·웹·CLI는 TypeScript(Node.js 26)로, 웹은 React SPA 정적 빌드로 정했다(ADR-0001). HTTP 프레임워크([ADR-0006](./adr/0006-server-api-contract.md))·DB([ADR-0003](./adr/0003-storage-and-concurrency.md))·배포 방식([ADR-0002](./adr/0002-deployment-packaging.md))은 미정이다.
+아래 구조는 역할 분리를 설명하는 제안이다. 서버·웹·CLI는 TypeScript(Node.js 26)로, 웹은 React SPA 정적 빌드로 정했다(ADR-0001). HTTP 프레임워크([ADR-0006](./adr/0006-server-api-contract.md))·DB([ADR-0003](./adr/0003-storage-and-concurrency.md))는 미정이다. 배포는 Node.js 런타임 동봉 압축 파일 + systemd 단일 프로세스로 정했다([ADR-0002](./adr/0002-deployment-packaging.md)).
 
 ```text
 브라우저 GUI (React SPA, 서버가 정적 파일 제공)
@@ -520,9 +521,9 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 
 **Jira는 TypeScript 서버의 JiraAdapter 경계 뒤에 작은 REST 어댑터로 연동한다(ADR-0001 채택).** 대상이 Jira 9.x인 동안 이 방식을 쓰고, 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판을 재평가한다(§6.1, §6.3). 실제 사내 설정에서의 동작은 먼저 확인한다. Confluence는 현재 요구대로 링크 저장부터 시작한다.
 
-서버 언어(TypeScript 단일), 프런트엔드 프레임워크(React), 웹 빌드 방식(SPA 정적 빌드), Node.js 주 버전(26 LTS), CLI 구성(Node.js + TypeScript + Commander.js), Jira 연동 방식(작은 REST 어댑터)은 ADR-0001에서 결정했다. 아직 결정하지 않은 사항은 HTTP 프레임워크(ADR-0006), DB·인증 방식, 폐쇄망 배포 형태(ADR-0002), CLI 배포 형태와 Commander.js 주 버전(ADR-0007), Graphlib 도입 여부, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시한다. 기존 제품 요구사항의 기능 범위를 임의로 확대하지 않으며, 기술 선택은 ADR에서 확정한다.
+서버 언어(TypeScript 단일), 프런트엔드 프레임워크(React), 웹 빌드 방식(SPA 정적 빌드), Node.js 주 버전(26 LTS), CLI 구성(Node.js + TypeScript + Commander.js), Jira 연동 방식(작은 REST 어댑터)은 ADR-0001에서 결정했다. 아직 결정하지 않은 사항은 HTTP 프레임워크(ADR-0006), DB·인증 방식, CLI 배포 형태와 Commander.js 주 버전(ADR-0007), Graphlib 도입 여부, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시한다. 기존 제품 요구사항의 기능 범위를 임의로 확대하지 않으며, 기술 선택은 ADR에서 확정한다.
 
-착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 정리되어 있다. 프런트엔드·서버·CLI 기술 구성을 다룬 [ADR-0001](./adr/0001-tech-stack.md)은 2026-10-08에 채택되었다. 폐쇄망 배포 형태는 [ADR-0002](./adr/0002-deployment-packaging.md), 저장소와 동시 수정은 [ADR-0003](./adr/0003-storage-and-concurrency.md), 인증·권한은 [ADR-0004](./adr/0004-authentication-authorization.md), CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다루며 모두 제안 상태다. 제안 상태의 ADR은 채택된 결정이 아니다.
+착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 정리되어 있다. 프런트엔드·서버·CLI 기술 구성을 다룬 [ADR-0001](./adr/0001-tech-stack.md)은 2026-10-08에 채택되었다. 폐쇄망 배포 형태를 다룬 [ADR-0002](./adr/0002-deployment-packaging.md)도 같은 날 채택되었다(Node.js 동봉 압축 파일 + systemd). 저장소와 동시 수정은 [ADR-0003](./adr/0003-storage-and-concurrency.md), 인증·권한은 [ADR-0004](./adr/0004-authentication-authorization.md), CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다루며 모두 제안 상태다. 제안 상태의 ADR은 채택된 결정이 아니다.
 
 ## 14. 참고 자료
 

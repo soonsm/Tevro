@@ -203,7 +203,7 @@ React Flow의 'Expand and Collapse' 예제는 Pro 전용이다(xyflow Pro Licens
 | --- | --- |
 | 팀의 TypeScript·Node.js 서버 경험과 React 경험 | 프로젝트 담당자, 개발 참여자 |
 | 사내 표준 언어·런타임 정책(허용 런타임 목록이 있는지) | 사내 아키텍처·보안 담당 |
-| 내부 npm 미러 유무 | 사내 인프라 담당([ADR-0002](./0002-deployment-packaging.md)) |
+| 내부 npm 미러 유무 — 확인됨(2026-10-08): 개발 PC용 미러 있음 | 사내 인프라 담당([ADR-0002](./0002-deployment-packaging.md)) |
 | 사내에서 허용하는 Node.js 버전 정책(26 사용 가능 여부) | 사내 인프라 담당 |
 | 빌드·테스트 도구의 Node.js 26 호환성 | 스파이크([README 스파이크 시나리오](./README.md)) |
 | 사용자 정의 공정 노드를 하위 흐름의 상위로 쓸 수 있는지, 접기·펼치기와 깊은 중첩의 동작 | 스파이크 |
