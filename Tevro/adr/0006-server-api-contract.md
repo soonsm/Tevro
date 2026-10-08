@@ -3,6 +3,7 @@
 - 상태: 제안 (Proposed)
 - 작성일: 2026-10-07
 - 개정: 2026-10-07 공정 계층 요구 반영
+- 개정: 2026-10-08 ADR-0003 채택 반영
 - 결정권자: 미정 — 프로젝트 담당자가 지정
 - 관련 문서:
   - PRD: [제품 요구사항](../product-requirements.md) §2 P-09, §3.2 원칙 3·7, §6.2 F-D02·F-D04·F-D06, §6.4 F-S04, §6.8 F-C01·F-C02·F-C05·F-C06·F-C07·F-C08과 '명령 체계 예시', §6.9 F-H01~F-H08·F-H11, §8 N-07, §9, §10 AC-03·AC-04·AC-13·AC-16·AC-17·AC-18·AC-19·AC-25~AC-32, §13-13, §13-15, §13-16
@@ -82,7 +83,7 @@ PRD 원문에는 모호한 점이 하나 있다. 서버가 잘못된 그래프�
 | 작업 | 내용 |
 | --- | --- |
 | `task.create` | 공정을 만든다. `tempId`(`tmp_` 접두사)로 같은 묶음의 다른 작업이 참조한다. `parentId`(선택)로 상위 공정을 지정한다. 실제 ID 또는 같은 묶음의 `tmp_` ID를 쓴다(F-H01) |
-| `task.update` | 공정 필드를 바꾼다. `expectedVersion`은 ADR-0003 1.3의 결정을 따른다. `parentId`는 여기서 바꿀 수 없다 |
+| `task.update` | 공정 필드를 바꾼다. `expectedVersion`은 생략할 수 있고, 생략하면 지정한 필드만 바꾸는 부분 수정이다(ADR-0003 1.3, 2026-10-08 채택). `parentId`는 여기서 바꿀 수 없다 |
 | `task.move` | 공정의 상위를 바꾼다(`parentId`, `null`이면 최상위로). 대상의 선행·후속 연결이 최종 상태에 남아 있으면 `HAS_DEPENDENCIES`다. 같은 묶음 안에서 `dependency.remove`를 먼저 담으면 통과한다(F-H08, AC-32). 하위 공정은 함께 움직인다(ADR-0003 1.7) |
 | `task.delete` | 공정을 지운다. 연결은 함께 지워진다. 하위가 있으면 ADR-0005의 하위 삭제 정책을 따른다 |
 | `dependency.add` | 선행 → 후속 연결을 추가한다. 실제 ID 또는 `tmp_` 임시 ID를 쓴다. 두 공정의 `parentId`가 같아야 한다(F-H03) |
@@ -121,7 +122,7 @@ PRD 원문에는 모호한 점이 하나 있다. 서버가 잘못된 그래프�
 | 그래프 전체 조회 | `GET /api/v1/projects/{projectId}/graph` — 공정, 종속성, `graphRevision`, 공정별 `version`. 공정마다 `parentId`·`childCount`·`doneChildCount`를 포함한다. 접기·펼치기는 클라이언트가 `parentId`로 구성한다(F-H07). `?root=<taskId>`를 주면 그 상위 안의 층(직접 하위와 그 사이 연결)만 돌려준다 |
 | 공정 생성 | `POST /api/v1/projects/{projectId}/tasks` — 본문의 `parentId`(선택)로 상위를 지정한다 |
 | 공정 목록 | `GET /api/v1/projects/{projectId}/tasks` — `?parentId=<taskId>`는 그 상위의 직접 하위만, `?depth=<n>`은 n층까지. 둘 다 없으면 모든 공정을 평면으로 돌려준다 |
-| 공정 조회·수정·삭제 | `GET`·`PATCH`·`DELETE /api/v1/tasks/{taskId}` — `PATCH`는 `If-Match`. `parentId`는 `PATCH`로 바꿀 수 없다 |
+| 공정 조회·수정·삭제 | `GET`·`PATCH`·`DELETE /api/v1/tasks/{taskId}` — `PATCH`는 `If-Match`(생략 가능, ADR-0003 1.3). `parentId`는 `PATCH`로 바꿀 수 없다 |
 | 상위 변경 | `POST /api/v1/tasks/{taskId}/move` — `task.move` 하나짜리 묶음. 구조 변경이므로 `expectedGraphRevision`을 받는다 |
 | 연결 추가·삭제 | `POST`·`DELETE /api/v1/projects/{projectId}/dependencies` — (선행, 후속) 쌍으로 지정 |
 | 변경 묶음 | `POST /api/v1/projects/{projectId}/change-sets` |

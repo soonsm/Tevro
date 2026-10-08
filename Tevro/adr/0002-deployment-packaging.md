@@ -3,13 +3,14 @@
 - 상태: 채택 (Accepted)
 - 작성일: 2026-10-07
 - 개정: 2026-10-08 ADR-0001 채택(React) 반영
+- 개정: 2026-10-08 남은 제안 4건 채택, ADR-0003 채택(SQLite, better-sqlite3) 반영
 - 결정일: 2026-10-08
 - 결정권자: 프로젝트 담당자(soonsm)
 - 관련 문서:
   - PRD: [제품 요구사항](../product-requirements.md) §8 N-01·N-02·N-03·N-04·N-08과 마지막 문단, §10 AC-14·AC-24, §13-1
   - OSS: [오픈소스와 구현 경계](../open-source-components.md) §11.1, §11.2, §12 '폐쇄망' 행
   - 선행 ADR: [ADR-0001](./0001-tech-stack.md)
-  - 짝을 이루는 ADR: [ADR-0003](./0003-storage-and-concurrency.md)(저장소)
+  - 짝을 이루는 ADR: [ADR-0003](./0003-storage-and-concurrency.md)(저장소. 2026-10-08 SQLite와 `better-sqlite3` 채택)
   - 연계 ADR: [ADR-0004](./0004-authentication-authorization.md)(HTTPS와 세션 쿠키), [ADR-0007](./0007-cli-contract.md)(CLI 배포 형태)
 
 ## 배경
@@ -26,11 +27,16 @@
 
 ## 결정
 
-2026-10-08 결정권자가 선택지 B(Node.js 런타임 동봉 tar.gz + systemd 단일 프로세스)를 채택했다. 저장소는 같은 호스트 로컬 디스크의 SQLite와 짝을 이룬다(저장소 자체는 [ADR-0003](./0003-storage-and-concurrency.md)에서 정한다). 아래 공통 규칙도 함께 채택했다.
+2026-10-08 결정권자가 선택지 B(Node.js 런타임 동봉 tar.gz + systemd 단일 프로세스)를 채택했다. 저장소는 같은 호스트 로컬 디스크의 SQLite와 짝을 이룬다. 저장소 자체는 [ADR-0003](./0003-storage-and-concurrency.md)에서 정했다(2026-10-08 SQLite 채택, 드라이버 `better-sqlite3`). 아래 공통 규칙도 함께 채택했다.
 
-결정권자가 명시적으로 답한 범위는 배포 형태(B), '컨테이너 대비'의 네 규칙과 이전 조건, 공통 규칙이다. '업데이트·롤백'과 '라이선스·반입 승인 병행 착수'는 결정권자가 따로 답하지 않았다. 채택 범위에 드는지 확인할 때까지 제안 문구로 둔다.
+결정권자가 명시적으로 답한 범위는 다음과 같다.
 
-결정 때 같은 호스트에 PostgreSQL을 직접 설치하는 안(B + PostgreSQL 직접 설치)도 제시됐으나 선택되지 않았다. 선택하지 않은 사유는 기록되지 않았다.
+| 시점 | 답한 범위 |
+| --- | --- |
+| 처음 결정(2026-10-08) | 배포 형태(B), '컨테이너 대비'의 네 규칙과 이전 조건, 공통 규칙 |
+| 2026-10-08 개정 | 처음 결정 때 따로 답하지 않아 제안으로 두었던 네 가지. 로그 표준 출력·표준 오류, 종료 신호(SIGTERM) 안전 종료, 업데이트·롤백 원칙, 라이선스·반입 승인 병행 착수. 네 가지 모두 채택했다 |
+
+결정 때 같은 호스트에 PostgreSQL을 직접 설치하는 안(B + PostgreSQL 직접 설치)도 제시됐으나 선택되지 않았다. 선택하지 않은 사유는 기록되지 않았다. [ADR-0003](./0003-storage-and-concurrency.md) 결정 과정에서도 PostgreSQL(직접 운영)을 검토했으나 결정권자는 SQLite로 정했다. 이 사유도 기록되지 않았다.
 
 결정 시점에 결정권자가 답한 환경 상태는 다음과 같다.
 
@@ -42,7 +48,7 @@
 
 ### 컨테이너 대비
 
-컨테이너 플랫폼 사용이 사내 정책상 필수로 확인되면 실행 구조를 바꾸지 않고 이미지와 배포 정의를 더해 옮길 수 있도록, 앱을 처음부터 다음 형태로 만든다. 옮길 때는 내부 OCI 레지스트리와 아래 SQLite 유지 조건도 갖춰야 한다. 결정권자가 정한 규칙은 다음 네 가지다.
+컨테이너 플랫폼 사용이 사내 정책상 필수로 확인되면 실행 구조를 바꾸지 않고 이미지와 배포 정의를 더해 옮길 수 있도록, 앱을 처음부터 다음 형태로 만든다. 옮길 때는 내부 OCI 레지스트리와 아래 SQLite 유지 조건도 갖춰야 한다. 결정권자가 정한 규칙은 다음 여섯 가지다. 앞의 네 가지는 처음 결정 때 채택했다. 뒤의 두 가지(로그, 종료 신호)는 처음 결정 때 작성자가 더한 제안이었고, 2026-10-08 개정 때 결정권자가 채택했다.
 
 | 규칙 | 이유 |
 | --- | --- |
@@ -50,13 +56,8 @@
 | 설정을 환경변수로 받는다. 설정 파일과 비밀값은 공통 규칙을 따른다 | OpenShift 이미지 지침은 실행 설정을 환경변수로 받으라고 권한다(4.1.2.5) [OpenShift 이미지 지침][ocp-images]. systemd 서비스는 `Environment=`·`EnvironmentFile=`로 환경변수를 넘긴다 [systemd.exec][systemd-exec] |
 | 데이터 디렉터리(SQLite 파일, 백업 위치)를 설정으로 지정한다. 앱 설치 경로에 쓰지 않는다 | 영속 볼륨을 붙이는 위치를 분리한다 |
 | 특정 UID·root 권한을 가정하지 않는다. 쓰기 위치는 데이터 디렉터리뿐이다 | OpenShift는 기본적으로 임의로 배정한 UID로 컨테이너를 실행한다. 이 사용자는 항상 root 그룹에 속하므로, 이미지의 쓰기 디렉터리는 root 그룹이 읽고 쓸 수 있어야 한다(4.1.2.2) [OpenShift 이미지 지침][ocp-images] |
-
-다음 두 항목은 작성자가 더한 제안이다. 결정권자가 답하지 않았으므로 채택 범위가 아니며, 확인 전까지 제안으로 둔다.
-
-| 제안 | 이유 |
-| --- | --- |
-| 로그는 표준 출력·표준 오류로 낸다 | OpenShift 이미지 지침은 로그를 모두 표준 출력으로 보내라고 권한다(4.1.2.8) [OpenShift 이미지 지침][ocp-images]. systemd 서비스의 표준 출력·표준 오류는 기본 설정에서 저널(journald)로 간다 [systemd.exec][systemd-exec] |
-| 종료 신호(SIGTERM)를 받으면 진행 중인 쓰기를 마치고 종료한다 | systemd는 서비스를 멈출 때 기본으로 SIGTERM을 보내고, 보통 SIGKILL이 뒤따른다 [systemd.kill][systemd-kill]. Kubernetes도 파드를 종료할 때 각 컨테이너의 주 프로세스에 TERM 신호를 보내고, 유예 시간이 지나면 KILL 신호를 보낸다 [파드 종료][k8s-pod-termination]. SIGTERM을 처리하면 두 경우 모두 강제 종료 전에 SQLite 쓰기를 마무리할 수 있다 |
+| 로그는 표준 출력·표준 오류로 낸다(2026-10-08 채택) | OpenShift 이미지 지침은 로그를 모두 표준 출력으로 보내라고 권한다(4.1.2.8) [OpenShift 이미지 지침][ocp-images]. systemd 서비스의 표준 출력·표준 오류는 기본 설정에서 저널(journald)로 간다 [systemd.exec][systemd-exec] |
+| 종료 신호(SIGTERM)를 받으면 새 요청을 거절하고, 진행 중인 요청과 트랜잭션을 마무리한 뒤 DB를 닫고 종료한다(2026-10-08 채택) | systemd는 서비스를 멈출 때 기본으로 SIGTERM을 보내고, 보통 SIGKILL이 뒤따른다 [systemd.kill][systemd-kill]. Kubernetes도 파드를 종료할 때 각 컨테이너의 주 프로세스에 TERM 신호를 보내고, 유예 시간이 지나면 KILL 신호를 보낸다 [파드 종료][k8s-pod-termination]. SIGTERM을 처리하면 두 경우 모두 강제 종료 전에 SQLite 쓰기를 마무리하고 DB 파일을 닫을 수 있다(저장소는 ADR-0003에서 SQLite로 채택) |
 
 컨테이너로 옮길 때 SQLite를 유지하려면 두 조건이 필요하다. 영속 볼륨이 네트워크 파일 시스템이 아닌 블록 볼륨(단일 노드 쓰기)이어야 하고, 인스턴스는 하나여야 한다. SQLite WAL은 네트워크 파일 시스템에서 동작하지 않는다. [SQLite WAL][sqlite-wal]
 
@@ -95,17 +96,18 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 
 브라우저에서 Tevro로 들어오는 HTTPS의 서버 인증서는 별개의 문제다. 어디서 TLS를 종단할지(Tevro 자체, 리버스 프록시, OpenShift Route)는 확인 사항으로 둔다. 웹 세션 쿠키의 Secure 속성([ADR-0004](./0004-authentication-authorization.md))이 HTTPS를 전제로 한다.
 
-### 업데이트·롤백 — 제안(결정권자 확인 전)
+### 업데이트·롤백 — 채택(2026-10-08)
 
-세부 절차(마이그레이션 자동 실행 여부, 롤백 시 DB 복구 순서)는 첫 운영 설치 전까지 이월할 수 있다고 제안한다. 원칙만 지금 정해 둔다.
+2026-10-08 결정권자가 아래 원칙을 채택했다. 세부 절차(마이그레이션 자동 실행 여부, 롤백 시 DB 복구 순서)는 첫 운영 설치 전에 확정한다.
 
 - 업데이트 전에 백업한다([ADR-0003](./0003-storage-and-concurrency.md)).
 - 스키마 마이그레이션은 앞으로만 진행한다.
-- 롤백은 이전 배포물과 업데이트 전 백업의 복구로 한다.
+- 롤백은 이전 배포물을 다시 설치하고 업데이트 전 백업을 복구하는 것으로 한다.
+- 롤백하면 업데이트 이후 입력한 데이터는 잃는다.
 
-### 라이선스·반입 승인 병행 착수 — 제안(결정권자 확인 전)
+### 라이선스·반입 승인 병행 착수 — 채택(2026-10-08)
 
-지금 승인 요청을 시작하는 것을 제안한다. 아래 라이선스는 2026-10-07 npm 메타데이터 기준이다(`@xyflow/react`·`react`·`react-dom`은 2026-10-08 기준). 반입할 릴리스의 LICENSE 파일과 전이 의존성으로 다시 확인한다(OSS §11.1).
+2026-10-08 결정권자가 승인 요청을 지금 시작하기로 했다. 요청 자체는 결정권자가 사내 절차로 직접 한다. 대상에 `better-sqlite3`(ADR-0003 드라이버)와 그 안에 번들된 SQLite를 더했다. 아래 라이선스는 2026-10-07 npm 메타데이터 기준이다(`@xyflow/react`·`react`·`react-dom`·`better-sqlite3`는 2026-10-08 기준). 반입할 릴리스의 LICENSE 파일과 전이 의존성으로 다시 확인한다(OSS §11.1).
 
 | 패키지 | 확인한 버전 | 라이선스 | 용도 |
 | --- | --- | --- | --- |
@@ -115,6 +117,10 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 | `@dagrejs/dagre` | 3.1.1 | MIT | 자동 배치 |
 | `commander` | 15.0.0 | MIT | CLI 명령 해석 |
 | `@dagrejs/graphlib`(필요 시) | 4.0.5 | MIT | 그래프 알고리즘 |
+| `better-sqlite3` | 13.0.3 | MIT | SQLite 드라이버([ADR-0003](./0003-storage-and-concurrency.md)). 미리 빌드된 네이티브 바이너리를 포함한다. 대상 서버 플랫폼이 포함되는지 확인 필요. `engines`는 `node >=22`. 의존성 `node-addon-api` `^8.0.0` |
+| SQLite(`better-sqlite3`에 번들) | 3.53.4 | 확인 필요. 반입할 릴리스로 확인한다(OSS §11.1) | 저장소 엔진. `better-sqlite3` 기본 배포에 들어 있다 [better-sqlite3 compilation 문서][bs3-compilation] |
+
+`better-sqlite3`는 네이티브 애드온이다. 2026-10-08 npm 배포물(13.0.3)을 직접 확인했다. 패키지에 install 스크립트가 없고, `prebuilds/`에 미리 빌드된 `.node` 바이너리가 들어 있다(darwin-arm64, darwin-x64, linux-arm64, linux-x64, linuxmusl-arm64, linuxmusl-x64, win32-arm64, win32-x64 등). 따라서 설치할 때 외부에서 내려받는 것이 없고, 내부 npm 미러로 설치할 수 있다. 대상 서버의 OS·아키텍처가 이 목록에 있는지는 '남은 확인 사항'이다. [better-sqlite3 npm 메타데이터][npm-better-sqlite3], [better-sqlite3 README][bs3-readme]
 
 나중에 선택지 A로 옮기게 되면 컨테이너 기반 이미지의 사내 표준과 승인 여부도 함께 확인한다.
 
@@ -165,8 +171,8 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 | 조합 | 성립 조건 | 제안 | 결정 시점 판단(2026-10-08) |
 | --- | --- | --- | --- |
 | A + PostgreSQL | 사내 운영 DB 또는 플랫폼 안의 PostgreSQL | 기본 짝 | 사내 PostgreSQL을 쓸 수 없어 성립하지 않는다 |
-| B + SQLite | 로컬 디스크, 서버 프로세스 하나 | 기본 짝 | 배포 형태 B를 채택했고, 이 조합이 B의 기본 짝이다. 저장소 확정은 [ADR-0003](./0003-storage-and-concurrency.md)에서 한다 |
-| B + PostgreSQL | 사내 PostgreSQL 접근 가능 | 가능 | 사내 PostgreSQL을 쓸 수 없어 성립하지 않는다. 같은 호스트에 PostgreSQL을 직접 설치하는 안도 제시됐으나 선택되지 않았다. 선택하지 않은 사유는 기록되지 않았다 |
+| B + SQLite | 로컬 디스크, 서버 프로세스 하나 | 기본 짝 | 배포 형태 B의 기본 짝이다. [ADR-0003](./0003-storage-and-concurrency.md)에서 SQLite로 채택(2026-10-08). 드라이버는 `better-sqlite3` |
+| B + PostgreSQL | 사내 PostgreSQL 접근 가능 | 가능 | 사내 PostgreSQL을 쓸 수 없어 성립하지 않는다. 같은 호스트에 PostgreSQL을 직접 설치하는 안도 제시됐으나 선택되지 않았다. 선택하지 않은 사유는 기록되지 않았다. ADR-0003 결정 과정에서도 검토했으나 SQLite로 정했다(사유 기록 안 됨) |
 | A + SQLite | 인스턴스 1개, 네트워크 파일 시스템이 아닌 볼륨 | 조건 확인 부담이 커서 제안하지 않음 | 컨테이너 플랫폼 사용이 필수로 확인될 때의 이전 경로로 둔다. 조건은 블록 볼륨과 단일 인스턴스다 |
 
 ## 트레이드오프
@@ -174,13 +180,14 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 - A는 플랫폼에 운영을 맡기는 대신 이미지·매니페스트 작성과 기반 이미지 관리가 늘어난다.
 - B는 반입과 설치가 가장 단순한 대신 런타임 패치, 재시작, 모니터링을 Tevro 쪽에서 직접 맡는다.
 - 업데이트·롤백 세부를 이월하면 착수가 빨라지는 대신, 첫 운영 설치 직전에 마이그레이션·백업 절차를 서둘러 정해야 할 위험이 있다.
+- 롤백이 업데이트 전 백업의 복구이므로, 롤백하면 업데이트 이후 입력한 데이터를 잃는다. 업데이트 뒤 롤백을 늦게 결정할수록 잃는 데이터가 많아진다.
 - 공통 규칙(CSP, 자산 번들, 버전 고정)은 초기 개발 속도를 약간 늦추지만 AC-14 시험에서 뒤늦게 발견되는 문제를 줄인다.
 
 ## 결과
 
 쉬워지는 것:
 
-- ADR-0003의 저장소 선택이 환경 사실로 좁혀진다.
+- ADR-0003의 저장소 선택이 환경 사실로 좁혀진다(2026-10-08 SQLite 채택).
 - 반입 승인 요청을 지금 시작할 수 있다.
 - AC-14(인터넷 차단 환경) 시험 조건이 명확해진다.
 
@@ -207,7 +214,7 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 | OpenShift·컨테이너 런타임 사용 가능 여부와 사용이 필수인지, 운영 담당 조직, 영속 볼륨 종류(블록 볼륨인지 네트워크 파일 시스템인지) | 사내 플랫폼 담당 |
 | 사내 CA 번들의 위치·형식(PEM 여부)과 서버 OS 신뢰 저장소 설치 여부 | 사내 보안·인프라 담당 |
 | 브라우저→Tevro HTTPS 종단 위치와 서버 인증서 발급 절차 | 사내 인프라 담당 |
-| 대상 서버의 OS·아키텍처 | 사내 인프라 담당 |
+| 대상 서버의 OS·아키텍처. Node.js 26 공식 바이너리, `better-sqlite3` 미리 빌드된 바이너리 플랫폼 목록과 대조한다 | 사내 인프라 담당 |
 | 오픈소스 반입 승인 절차와 리드타임, 개발 단계에도 승인이 필요한지 | 사내 보안·법무 담당 |
 | 반입 매체와 절차(파일 반입 승인, 크기 제한) | 사내 보안 담당 |
 | 선택지 A로 옮길 경우 기반 이미지 사내 표준 | 사내 플랫폼 담당 |
@@ -216,10 +223,10 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 
 - [x] 선택지를 고른다(2026-10-08, B 채택).
 - [ ] 컨테이너 플랫폼 사용 가능 여부와 필수 여부를 확인한다.
-- [ ] 결정권자에게 작성자 추가 제안(로그 표준 출력, SIGTERM 처리)과 '업데이트·롤백'·'라이선스·반입 승인 병행 착수'가 채택 범위인지 확인한다.
-- [ ] '컨테이너 대비' 규칙을 스파이크 서버 구조에 적용한다.
-- [ ] 대상 서버 OS·아키텍처를 확인하고 동봉할 Node.js 26 공식 바이너리를 정한다.
-- [ ] 오픈소스 라이선스·반입 승인 요청을 지금 시작한다(위 표의 패키지와 전이 의존성).
+- [x] 결정권자에게 작성자 추가 제안(로그 표준 출력, SIGTERM 처리)과 '업데이트·롤백'·'라이선스·반입 승인 병행 착수'가 채택 범위인지 확인한다(2026-10-08, 네 가지 모두 채택).
+- [ ] '컨테이너 대비' 규칙(로그 표준 출력, SIGTERM 안전 종료 포함)을 스파이크 서버 구조에 적용한다.
+- [ ] 대상 서버 OS·아키텍처를 확인하고 동봉할 Node.js 26 공식 바이너리를 정한다. `better-sqlite3` 미리 빌드된 바이너리가 그 플랫폼을 포함하는지 대조한다.
+- [ ] 오픈소스 라이선스·반입 승인 요청을 지금 시작한다(위 표의 패키지와 전이 의존성. 요청은 결정권자가 사내 절차로 직접 한다).
 - [ ] 배포물에 넣을 의존성 목록(SBOM) 생성 방식을 정한다.
 - [ ] 인터넷 차단 환경에서 설치·실행 시험 절차를 만든다(AC-14).
 - [ ] CSP 헤더와 정적 자산 번들 규칙을 스파이크에 적용한다.
@@ -228,7 +235,7 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 
 ## 출처
 
-2026-10-07에 확인했다. `@xyflow/react`, `react`, `react-dom`의 npm 메타데이터, OpenShift 이미지 지침 4.1.2.5·4.1.2.8, systemd·Kubernetes 문서는 2026-10-08에 확인했다.
+2026-10-07에 확인했다. `@xyflow/react`, `react`, `react-dom`의 npm 메타데이터, OpenShift 이미지 지침 4.1.2.5·4.1.2.8, systemd·Kubernetes 문서, `better-sqlite3`의 npm 메타데이터·배포물·문서는 2026-10-08에 확인했다.
 
 - [SQLite Write-Ahead Logging][sqlite-wal]
 - [Node.js CLI 문서 — NODE_EXTRA_CA_CERTS, --use-system-ca, NODE_USE_SYSTEM_CA, NODE_TLS_REJECT_UNAUTHORIZED][node-cli]
@@ -236,7 +243,9 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 - [systemd.exec — Environment=, EnvironmentFile=, StandardOutput=, StandardError=][systemd-exec]
 - [systemd.kill — KillSignal=][systemd-kill]
 - [Kubernetes Pod Lifecycle — Termination of Pods][k8s-pod-termination]
-- npm 메타데이터: [@xyflow/react][npm-xyflow-react], [react][npm-react], [react-dom][npm-react-dom], [@dagrejs/dagre][npm-dagre], [commander][npm-commander], [@dagrejs/graphlib][npm-graphlib]
+- npm 메타데이터: [@xyflow/react][npm-xyflow-react], [react][npm-react], [react-dom][npm-react-dom], [@dagrejs/dagre][npm-dagre], [commander][npm-commander], [@dagrejs/graphlib][npm-graphlib], [better-sqlite3][npm-better-sqlite3]
+- [better-sqlite3 README — 미리 빌드된 바이너리][bs3-readme]
+- [better-sqlite3 compilation 문서 — 번들 SQLite 버전][bs3-compilation]
 
 [sqlite-wal]: https://www.sqlite.org/wal.html
 [node-cli]: https://nodejs.org/api/cli.html
@@ -250,3 +259,6 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 [npm-dagre]: https://registry.npmjs.org/@dagrejs/dagre
 [npm-commander]: https://registry.npmjs.org/commander
 [npm-graphlib]: https://registry.npmjs.org/@dagrejs/graphlib
+[npm-better-sqlite3]: https://registry.npmjs.org/better-sqlite3
+[bs3-readme]: https://github.com/WiseLibs/better-sqlite3
+[bs3-compilation]: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/compilation.md

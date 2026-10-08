@@ -1,19 +1,20 @@
 # Tevro — 활용 가능한 오픈소스와 구현 경계
 
-- 문서 상태: 기술 검토 및 추천안. 이 문서 자체는 기술 스택 채택이나 구현 완료를 의미하지 않음. 채택된 결정은 ADR에 기록하며, 현재 채택 상태인 것은 ADR-0001과 ADR-0002다.
+- 문서 상태: 기술 검토 및 추천안. 이 문서 자체는 기술 스택 채택이나 구현 완료를 의미하지 않음. 채택된 결정은 ADR에 기록하며, 현재 채택 상태인 것은 ADR-0001, ADR-0002, ADR-0003이다.
 - 작성 기준일: 2026-09-26
 - 개정일: 2026-10-07 — 외부 정보 재확인 결과 반영, 공정 계층 요구 반영
 - 개정일: 2026-10-08 — ADR-0001 채택(TypeScript 단일, React SPA, Node 26) 반영
 - 개정일: 2026-10-08 — ADR-0002 채택(Node.js 동봉 압축 파일 + systemd) 반영
+- 개정일: 2026-10-08 — ADR-0003 채택(SQLite + better-sqlite3) 반영
 - 관련 문서: [해결하려는 문제와 제품 요구사항](./product-requirements.md), [착수 전 결정 기록(ADR)](./adr/README.md)
 - 목적: 공정 GUI 편집, DAG 배치·검증, Jira·Confluence 연동, CLI 구현에 활용할 기존 오픈소스를 정리하고 Tevro가 직접 구현할 부분을 구분한다.
-- 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다. 2026-10-07에 버전·지원 기간·엔드포인트 등 공개 정보를 다시 확인해 반영했다. 이 재확인도 공개 자료 대조이며, 사내 설치·동작 검증은 여전히 아니다. 2026-10-08에는 ADR-0001 채택에 맞춰 React Flow·React·Vite의 공개 정보(npm 메타데이터, 공식 문서·예제 페이지, Pro 라이선스)를 확인해 반영했다. 이것도 공개 자료 대조다.
+- 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다. 2026-10-07에 버전·지원 기간·엔드포인트 등 공개 정보를 다시 확인해 반영했다. 이 재확인도 공개 자료 대조이며, 사내 설치·동작 검증은 여전히 아니다. 2026-10-08에는 ADR-0001 채택에 맞춰 React Flow·React·Vite의 공개 정보(npm 메타데이터, 공식 문서·예제 페이지, Pro 라이선스)를 확인해 반영했다. 같은 날 ADR-0003 채택에 맞춰 better-sqlite3의 공개 정보(npm 메타데이터와 패키지 압축 파일 내용, README, 공식 문서)도 확인해 반영했다. 이것도 공개 자료 대조다.
 
 > 그래프를 그리고 조작하는 기술은 기존 라이브러리를 활용한다. Tevro는 공정의 의미, 선행 조건, 템플릿 재사용, Jira 매핑과 상태의 일관성에 집중한다.
 
 ## 1. 추천 조합 요약
 
-[ADR-0001](./adr/0001-tech-stack.md)에서 TypeScript 단일 언어와 React를 채택했다(2026-10-08). 서버·웹·CLI를 모두 TypeScript로 작성하고(Node.js 서버 + React SPA + Node.js CLI), Node.js 주 버전은 26 LTS다. 아래 표는 이 결정에 맞춘 조합이다. ADR-0001에서 정한 항목은 '채택'으로 표시하고, 나머지는 후보로 남긴다.
+[ADR-0001](./adr/0001-tech-stack.md)에서 TypeScript 단일 언어와 React를 채택했다(2026-10-08). 서버·웹·CLI를 모두 TypeScript로 작성하고(Node.js 서버 + React SPA + Node.js CLI), Node.js 주 버전은 26 LTS다. 아래 표는 이 결정에 맞춘 조합이다. ADR-0001과 ADR-0003에서 정한 항목은 '채택'으로 표시하고, 나머지는 후보로 남긴다.
 
 | 역할 | 채택·후보 | 판단 |
 | --- | --- | --- |
@@ -25,6 +26,7 @@
 | 그래프 자료구조·알고리즘 | Graphlib (`@dagrejs/graphlib`) | TypeScript 서버(ADR-0001)의 도메인 모듈에서 활용 가능. 순환 검사만 필요하면 작은 자체 함수도 선택지. 도입 여부는 스파이크로 정함(§5.1) |
 | Jira API 접근 | 서버 JiraAdapter 뒤의 작은 REST 어댑터 — 채택(ADR-0001) | Jira 9.x 대상인 동안 REST 어댑터로 구현(§6.3). 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상을 재평가(§6.1). SDK 때문에 서버 언어를 바꾸지 않음 |
 | Confluence | 초기에는 URL 저장·표시 | 현재 요구에는 SDK나 페이지 본문 수집이 필요하지 않음 |
+| 영속 저장소 | SQLite + `better-sqlite3` — 채택(ADR-0003) | 서버만 접근한다. 모든 쓰기 트랜잭션을 `BEGIN IMMEDIATE`로 열어 하나씩 처리한다. 동기식 API다(§9) |
 | CLI 명령 해석 | Commander.js (`commander`) — 채택(ADR-0001) | 명령·옵션·도움말 처리를 재사용하고 Tevro API 호출은 직접 구현. CLI는 Node.js + TypeScript(ADR-0001). 주 버전(14.x 또는 15.x)과 배포 형태는 ADR-0007에서 정함 |
 | 문서용 그래프 출력 | Mermaid | 주 GUI 편집기 대신 후속 내보내기 기능의 후보 |
 
@@ -412,7 +414,7 @@ Jira 일괄 생성처럼 외부 데이터를 만드는 명령에는 미리 보�
 
 ## 9. 권장 연결 구조와 데이터 경계
 
-아래 구조는 역할 분리를 설명하는 제안이다. 서버·웹·CLI는 TypeScript(Node.js 26)로, 웹은 React SPA 정적 빌드로 정했다(ADR-0001). HTTP 프레임워크([ADR-0006](./adr/0006-server-api-contract.md))·DB([ADR-0003](./adr/0003-storage-and-concurrency.md))는 미정이다. 배포는 Node.js 런타임 동봉 압축 파일 + systemd 단일 프로세스로 정했다([ADR-0002](./adr/0002-deployment-packaging.md)).
+아래 구조는 역할 분리를 설명하는 제안이다. 서버·웹·CLI는 TypeScript(Node.js 26)로, 웹은 React SPA 정적 빌드로 정했다(ADR-0001). HTTP 프레임워크([ADR-0006](./adr/0006-server-api-contract.md))는 미정이다. 저장소는 SQLite, Node.js 드라이버는 `better-sqlite3`로 정했다([ADR-0003](./adr/0003-storage-and-concurrency.md)). 배포는 Node.js 런타임 동봉 압축 파일 + systemd 단일 프로세스로 정했다([ADR-0002](./adr/0002-deployment-packaging.md)).
 
 ```text
 브라우저 GUI (React SPA, 서버가 정적 파일 제공)
@@ -430,9 +432,9 @@ Tevro 서버 (Node.js + TypeScript)
   ├─ 공정·계층·종속성·상태 규칙
   ├─ 템플릿 복제와 실행본 분리
   ├─ Jira 매핑·상태 조회·실패 복구
-  └─ 저장·동시 수정 처리
+  └─ 저장·동시 수정 처리 (쓰기는 BEGIN IMMEDIATE로 하나씩)
           │
-          ├─ 영속 저장소
+          ├─ SQLite (better-sqlite3, 같은 호스트 로컬 디스크)
           └─ JiraAdapter ── 사내 Jira
 
 Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이지 열기
@@ -444,10 +446,30 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 | --- | --- | --- |
 | 공정의 업무 정보 | ID, 제목, 설명, 실행 상태, 데드라인 | Tevro 도메인 데이터 |
 | 공정의 관계 | 선행 ID, 후속 ID(종속성). 이와 별도로 공정이 갖는 상위 공정 ID(포함관계, 선택) | 화면과 독립적으로 검증·저장. 포함관계는 종속성 데이터에 섞지 않고 공정에 둔다 |
-| 표시 정보 | 노드 좌표, 뷰포트, 선택 상태, 접힘 상태 | 업무 정보와 구분. 영속화 여부와 범위는 별도 결정 |
-| 연동 정보 | Jira 사이트·이슈 ID·키, 마지막 조회 결과 | 도메인 관계와 연결하되 인증정보는 별도 보호 |
+| 표시 정보 | 노드 좌표, 뷰포트, 선택 상태, 접힘 상태 | 업무 정보와 구분. 영속화 여부와 범위는 별도 결정. 좌표를 저장하면 별도 테이블에 두고 구조 리비전·공정 버전을 올리지 않는다(ADR-0003) |
+| 연동 정보 | Jira 사이트·이슈 ID·키, 마지막 조회 결과 | 도메인 관계와 연결하되 인증정보는 별도 보호. 조회 결과는 별도 테이블에 두고 구조 리비전·공정 버전을 올리지 않는다(ADR-0003) |
 
 노드를 움직였다고 종속성이 바뀌거나, 이름을 바꿨다고 연결이 끊겨서는 안 된다. 노드를 상위 노드 영역 안으로 끌어다 놓았다는 이유만으로 포함관계를 바꾸지도 않는다. 상위 변경은 영향을 확인하는 명시적인 작업이다(F-H08). 레이아웃 엔진과 화면 라이브러리를 바꿔도 공정·템플릿·Jira 매핑을 보존할 수 있는 경계를 목표로 한다.
+
+영속 저장소는 SQLite이고 Node.js 드라이버는 `better-sqlite3`다([ADR-0003](./adr/0003-storage-and-concurrency.md), 2026-10-08 채택). 내장 `node:sqlite`(Node.js 26 문서 기준 Stability 1.2 Release candidate)도 검토했으나 채택하지 않았다. 결정권자가 `better-sqlite3`를 고른 사유는 기록되지 않았다. [node:sqlite][node-sqlite]
+
+2026-10-08에 확인한 `better-sqlite3`의 공개 정보는 다음과 같다. 사내 설치·동작 검증 결과는 아니다.
+
+| 항목 | 확인 내용 | 출처 |
+| --- | --- | --- |
+| 최신판·라이선스 | 13.0.3, MIT | [npm 메타데이터][better-sqlite3-npm] |
+| 실행 조건·의존성 | `engines.node` `>=22`. 의존성 `node-addon-api` `^8.0.0` | [npm 메타데이터][better-sqlite3-npm] |
+| 미리 빌드된 바이너리 | npm 패키지에 install 스크립트가 없다. 패키지 안 `prebuilds/`에 darwin-arm64, darwin-x64, linux-arm64, linux-x64, linuxmusl-arm64, linuxmusl-x64, win32-arm64, win32-x64 등의 `.node` 바이너리가 들어 있다(npm 패키지 압축 파일을 직접 확인). README도 주요 플랫폼·아키텍처용 미리 빌드된 바이너리를 제공한다고 밝힌다. 따라서 설치할 때 외부 다운로드가 없고 내부 npm 미러로 설치할 수 있다 | [npm 메타데이터][better-sqlite3-npm], [better-sqlite3 README][better-sqlite3] |
+| 번들 SQLite | 기본 배포는 SQLite 3.53.4를 번들한다 | [컴파일 문서][better-sqlite3-compilation] |
+| API 방식 | 동기식 API다. 트랜잭션 함수에 deferred·immediate·exclusive 변형이 있고, immediate는 `BEGIN IMMEDIATE`를 쓴다 | [README][better-sqlite3], [API 문서][better-sqlite3-api] |
+| 온라인 백업 | `.backup(destination)`은 SQLite 온라인 백업을 수행하고 promise를 돌려준다. 백업 중에도 DB를 계속 쓸 수 있다. 같은 연결이 바꾼 내용은 백업에 반영되지만 다른 연결이 바꾸면 백업이 처음부터 다시 시작된다. 그래서 온라인 백업을 쓰면 쓰기 연결을 하나로 두라고 권한다 | [API 문서][better-sqlite3-api] |
+
+Tevro에 적용할 때의 설계 판단은 다음과 같다.
+
+- 모든 쓰기 트랜잭션을 immediate 변형(`BEGIN IMMEDIATE`)으로 연다. 쓰기가 하나씩 처리되어 프로젝트 단위 구조 변경 직렬화가 충족된다(ADR-0003).
+- 쓰기 연결을 하나로 두는 것을 제안한다. 단일 writer 모델과 온라인 백업 권고가 같은 방향이다. 백업·복구 방식과 시점은 ADR-0003 §3의 제안(첫 운영 설치 전 완성)이며 결정권자 확인 전이다. 업데이트 전 백업은 [ADR-0002](./adr/0002-deployment-packaging.md)에서 채택했다(PRD N-04, AC-24).
+- 동기식 API이므로 쿼리가 실행되는 동안 Node.js 이벤트 루프가 막힌다. 프로젝트 그래프가 작다는 가정에 기대며, 예상 규모(동시 사용자, 프로젝트당 공정 수, 계층 깊이)는 확인 대상이다(ADR-0003).
+- 대상 서버의 OS·아키텍처가 위 미리 빌드된 바이너리 목록에 있는지는 확인이 필요하다(§11.2).
 
 ## 10. 직접 구현해야 하는 핵심
 
@@ -462,7 +484,7 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 | Jira | REST API·SDK | 매핑, 필수 필드 처리, 일부 실패·중복·결과 미확인 복구 |
 | Confluence | 초기에는 웹 링크 | 선택 정보 관리, 문서 열람과 제품 권한의 구분 |
 | CLI | Commander.js | 서버 API 호출, 구조화 출력, 오류·인증·안전한 변경 계약 |
-| 운영 | 선택한 서버·저장 기술 | 폐쇄망 설치, 영속성, 백업·복구, 인증·권한·동시 수정 |
+| 운영 | 채택한 서버·저장 기술(Node.js 26, SQLite + better-sqlite3) | 폐쇄망 설치, 영속성, 백업·복구, 인증·권한·동시 수정 |
 
 템플릿 재사용은 화면 JSON을 복사하는 기능이 아니다. 공정과 관계를 새 실행본으로 구성하고, 원본과 독립적으로 유지하는 도메인 기능이다. 그래프 저장·복원 예제를 도입하는 것만으로 서버 기반 프로젝트 관리가 완성되는 것도 아니다.
 
@@ -481,6 +503,7 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 - JavaScript·CSS·폰트·아이콘 등 실행 자산을 배포물에 포함하고 외부 CDN을 필수로 사용하지 않는다.
 - 선택한 버전과 의존성을 고정하고, 내부 패키지 저장소 또는 반입 절차로 재현 가능한 설치 경로를 마련한다.
 - CLI를 실행할 호스트(개발자 PC, AI 에이전트 실행 환경)의 Node.js 버전이 채택한 CLI 의존성의 요구 조건(예: Commander.js 15.x의 Node.js 22.12.0 이상)을 충족하는지 확인한다. 충족하지 않으면 런타임을 포함한 단일 실행 파일 번들을 검토한다. 결정은 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다.
+- `better-sqlite3`의 미리 빌드된 바이너리(`prebuilds/`)가 대상 서버의 OS·아키텍처를 포함하는지 확인한다. 2026-10-08에 확인한 목록은 §9에 있다. 목록에 없으면 설치 전에 대응 방법을 정한다. [better-sqlite3 README][better-sqlite3]
 - ELK.js Worker를 사용한다면 Worker 스크립트도 내부 배포 경로에서 제공한다. [ELK.js][elk]
 - 외부 인증, 외부 라이선스 확인, 원격 텔레메트리 등의 실행 의존성이 있는지는 실제 배포 조합에서 점검한다.
 - Jira 인증정보는 브라우저 번들, CLI의 일반 출력, 프로젝트 JSON에 포함하지 않는다.
@@ -521,13 +544,13 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 
 **Jira는 TypeScript 서버의 JiraAdapter 경계 뒤에 작은 REST 어댑터로 연동한다(ADR-0001 채택).** 대상이 Jira 9.x인 동안 이 방식을 쓰고, 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판을 재평가한다(§6.1, §6.3). 실제 사내 설정에서의 동작은 먼저 확인한다. Confluence는 현재 요구대로 링크 저장부터 시작한다.
 
-서버 언어(TypeScript 단일), 프런트엔드 프레임워크(React), 웹 빌드 방식(SPA 정적 빌드), Node.js 주 버전(26 LTS), CLI 구성(Node.js + TypeScript + Commander.js), Jira 연동 방식(작은 REST 어댑터)은 ADR-0001에서 결정했다. 아직 결정하지 않은 사항은 HTTP 프레임워크(ADR-0006), DB·인증 방식, CLI 배포 형태와 Commander.js 주 버전(ADR-0007), Graphlib 도입 여부, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시한다. 기존 제품 요구사항의 기능 범위를 임의로 확대하지 않으며, 기술 선택은 ADR에서 확정한다.
+서버 언어(TypeScript 단일), 프런트엔드 프레임워크(React), 웹 빌드 방식(SPA 정적 빌드), Node.js 주 버전(26 LTS), CLI 구성(Node.js + TypeScript + Commander.js), Jira 연동 방식(작은 REST 어댑터)은 ADR-0001에서 결정했다. 저장소(SQLite)와 Node.js 드라이버(`better-sqlite3`)는 ADR-0003에서 결정했다(§9). 아직 결정하지 않은 사항은 HTTP 프레임워크(ADR-0006), 인증 방식, CLI 배포 형태와 Commander.js 주 버전(ADR-0007), Graphlib 도입 여부, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시한다. 기존 제품 요구사항의 기능 범위를 임의로 확대하지 않으며, 기술 선택은 ADR에서 확정한다.
 
-착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 정리되어 있다. 프런트엔드·서버·CLI 기술 구성을 다룬 [ADR-0001](./adr/0001-tech-stack.md)은 2026-10-08에 채택되었다. 폐쇄망 배포 형태를 다룬 [ADR-0002](./adr/0002-deployment-packaging.md)도 같은 날 채택되었다(Node.js 동봉 압축 파일 + systemd). 저장소와 동시 수정은 [ADR-0003](./adr/0003-storage-and-concurrency.md), 인증·권한은 [ADR-0004](./adr/0004-authentication-authorization.md), CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다루며 모두 제안 상태다. 제안 상태의 ADR은 채택된 결정이 아니다.
+착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 정리되어 있다. 프런트엔드·서버·CLI 기술 구성을 다룬 [ADR-0001](./adr/0001-tech-stack.md)은 2026-10-08에 채택되었다. 폐쇄망 배포 형태를 다룬 [ADR-0002](./adr/0002-deployment-packaging.md)도 같은 날 채택되었다(Node.js 동봉 압축 파일 + systemd). 저장소와 동시 수정을 다룬 [ADR-0003](./adr/0003-storage-and-concurrency.md)도 같은 날 채택되었다(SQLite + better-sqlite3). 인증·권한은 [ADR-0004](./adr/0004-authentication-authorization.md), CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다루며 모두 제안 상태다. 제안 상태의 ADR은 채택된 결정이 아니다.
 
 ## 14. 참고 자료
 
-아래 링크는 앞선 검토에 사용한 공식 문서와 프로젝트 저장소다. 2026-10-07 재확인과 2026-10-08 ADR-0001 반영 때 추가한 출처도 함께 둔다. 기능과 라이선스는 실제 채택할 릴리스 기준으로 다시 확인한다.
+아래 링크는 앞선 검토에 사용한 공식 문서와 프로젝트 저장소다. 2026-10-07 재확인과 2026-10-08 ADR-0001·ADR-0003 반영 때 추가한 출처도 함께 둔다. 기능과 라이선스는 실제 채택할 릴리스 기준으로 다시 확인한다.
 
 ### GUI 및 그래프
 
@@ -561,6 +584,14 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 - [ELK.js 저장소][elk]
 - [ELK.js 패키지 메타데이터][elk-package]
 - [Mermaid 소개][mermaid]
+
+### 저장소
+
+- [better-sqlite3 npm 메타데이터 — 최신판·라이선스·Node 요구 범위·의존성 확인, 패키지 압축 파일의 `prebuilds/` 확인][better-sqlite3-npm]
+- [better-sqlite3 저장소·README — 동기식 API, 미리 빌드된 바이너리 제공 확인][better-sqlite3]
+- [better-sqlite3 컴파일 문서 — 번들 SQLite 버전 확인][better-sqlite3-compilation]
+- [better-sqlite3 API 문서 — 트랜잭션 변형(immediate = `BEGIN IMMEDIATE`)과 `.backup()` 확인][better-sqlite3-api]
+- [Node.js node:sqlite — 검토했으나 채택하지 않음][node-sqlite]
 
 ### Jira·Confluence·CLI
 
@@ -614,6 +645,11 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 [elk]: https://github.com/kieler/elkjs
 [elk-package]: https://github.com/kieler/elkjs/blob/master/package.json
 [mermaid]: https://mermaid.js.org/intro/
+[better-sqlite3-npm]: https://registry.npmjs.org/better-sqlite3
+[better-sqlite3]: https://github.com/WiseLibs/better-sqlite3
+[better-sqlite3-compilation]: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/compilation.md
+[better-sqlite3-api]: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md
+[node-sqlite]: https://nodejs.org/api/sqlite.html
 [atlassian-python]: https://github.com/atlassian-api/atlassian-python-api
 [python-jira-docs]: https://atlassian-python-api.readthedocs.io/jira.html
 [python-confluence-docs]: https://atlassian-python-api.readthedocs.io/confluence.html
