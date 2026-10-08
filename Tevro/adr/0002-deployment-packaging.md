@@ -2,6 +2,7 @@
 
 - 상태: 제안 (Proposed)
 - 작성일: 2026-10-07
+- 개정: 2026-10-08 ADR-0001 채택(React) 반영
 - 결정권자: 미정 — 프로젝트 담당자가 지정
 - 관련 문서:
   - PRD: [제품 요구사항](../product-requirements.md) §8 N-01·N-02·N-03·N-04·N-08과 마지막 문단, §10 AC-14·AC-24, §13-1
@@ -65,11 +66,13 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 
 ### 라이선스·반입 승인 병행 착수
 
-이 ADR의 채택을 기다리지 않고 지금 승인 요청을 시작하는 것을 제안한다. 아래 라이선스는 2026-10-07 npm 메타데이터 기준이다. 반입할 릴리스의 LICENSE 파일과 전이 의존성으로 다시 확인한다(OSS §11.1).
+이 ADR의 채택을 기다리지 않고 지금 승인 요청을 시작하는 것을 제안한다. 아래 라이선스는 2026-10-07 npm 메타데이터 기준이다(`@xyflow/react`·`react`는 2026-10-08 기준). 반입할 릴리스의 LICENSE 파일과 전이 의존성으로 다시 확인한다(OSS §11.1).
 
 | 패키지 | 확인한 버전 | 라이선스 | 용도 |
 | --- | --- | --- | --- |
-| `@xyflow/svelte` | 1.7.0 | MIT | 그래프 편집 |
+| `@xyflow/react` | 12.12.0 | MIT | 그래프 편집 |
+| `react` | 19.3.0 | 확인 필요 | 웹 UI. `@xyflow/react`의 peer 의존성(`>=17`) |
+| `react-dom` | 확인 필요 | 확인 필요 | 웹 UI. `@xyflow/react`의 peer 의존성(`>=17`) |
 | `@dagrejs/dagre` | 3.1.1 | MIT | 자동 배치 |
 | `commander` | 15.0.0 | MIT | CLI 명령 해석 |
 | `@dagrejs/graphlib`(필요 시) | 4.0.5 | MIT | 그래프 알고리즘 |
@@ -180,17 +183,18 @@ Tevro 서버가 사내 시스템(4단계의 Jira 등)을 호출할 때의 신뢰
 
 ## 출처
 
-2026-10-07에 확인했다.
+2026-10-07에 확인했다. `@xyflow/react`와 `react`의 npm 메타데이터는 2026-10-08에 확인했다.
 
 - [SQLite Write-Ahead Logging][sqlite-wal]
 - [Node.js CLI 문서 — NODE_EXTRA_CA_CERTS, --use-system-ca, NODE_USE_SYSTEM_CA, NODE_TLS_REJECT_UNAUTHORIZED][node-cli]
 - [OpenShift Container Platform 4.18 Images — 4.1.2.2 Support arbitrary user ids][ocp-images]
-- npm 메타데이터: [@xyflow/svelte][npm-xyflow-svelte], [@dagrejs/dagre][npm-dagre], [commander][npm-commander], [@dagrejs/graphlib][npm-graphlib]
+- npm 메타데이터: [@xyflow/react][npm-xyflow-react], [react][npm-react], [@dagrejs/dagre][npm-dagre], [commander][npm-commander], [@dagrejs/graphlib][npm-graphlib]
 
 [sqlite-wal]: https://www.sqlite.org/wal.html
 [node-cli]: https://nodejs.org/api/cli.html
 [ocp-images]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html-single/images/index
-[npm-xyflow-svelte]: https://registry.npmjs.org/@xyflow/svelte
+[npm-xyflow-react]: https://registry.npmjs.org/@xyflow/react
+[npm-react]: https://registry.npmjs.org/react
 [npm-dagre]: https://registry.npmjs.org/@dagrejs/dagre
 [npm-commander]: https://registry.npmjs.org/commander
 [npm-graphlib]: https://registry.npmjs.org/@dagrejs/graphlib

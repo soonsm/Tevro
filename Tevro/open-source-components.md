@@ -1,28 +1,30 @@
 # Tevro — 활용 가능한 오픈소스와 구현 경계
 
-- 문서 상태: 기술 검토 및 추천안. 기술 스택 채택이나 구현 완료를 의미하지 않음.
+- 문서 상태: 기술 검토 및 추천안. 이 문서 자체는 기술 스택 채택이나 구현 완료를 의미하지 않음. 채택된 결정은 ADR에 기록하며, 현재 채택 상태인 것은 ADR-0001이다.
 - 작성 기준일: 2026-09-26
 - 개정일: 2026-10-07 — 외부 정보 재확인 결과 반영, 공정 계층 요구 반영
+- 개정일: 2026-10-08 — ADR-0001 채택(TypeScript 단일, React SPA, Node 26) 반영
 - 관련 문서: [해결하려는 문제와 제품 요구사항](./product-requirements.md), [착수 전 결정 기록(ADR)](./adr/README.md)
 - 목적: 공정 GUI 편집, DAG 배치·검증, Jira·Confluence 연동, CLI 구현에 활용할 기존 오픈소스를 정리하고 Tevro가 직접 구현할 부분을 구분한다.
-- 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다. 2026-10-07에 버전·지원 기간·엔드포인트 등 공개 정보를 다시 확인해 반영했다. 이 재확인도 공개 자료 대조이며, 사내 설치·동작 검증은 여전히 아니다.
+- 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다. 2026-10-07에 버전·지원 기간·엔드포인트 등 공개 정보를 다시 확인해 반영했다. 이 재확인도 공개 자료 대조이며, 사내 설치·동작 검증은 여전히 아니다. 2026-10-08에는 ADR-0001 채택에 맞춰 React Flow·React·Vite의 공개 정보(npm 메타데이터, 공식 문서·예제 페이지, Pro 라이선스)를 확인해 반영했다. 이것도 공개 자료 대조다.
 
 > 그래프를 그리고 조작하는 기술은 기존 라이브러리를 활용한다. Tevro는 공정의 의미, 선행 조건, 템플릿 재사용, Jira 매핑과 상태의 일관성에 집중한다.
 
 ## 1. 추천 조합 요약
 
-Svelte 프런트엔드와 Node.js CLI를 선택한다는 조건에서의 1차 추천이다. 서버 언어는 아직 확정하지 않는다.
+[ADR-0001](./adr/0001-tech-stack.md)에서 TypeScript 단일 언어와 React를 채택했다(2026-10-08). 서버·웹·CLI를 모두 TypeScript로 작성하고(Node.js 서버 + React SPA + Node.js CLI), Node.js 주 버전은 26 LTS다. 아래 표는 이 결정에 맞춘 조합이다. ADR-0001에서 정한 항목은 '채택'으로 표시하고, 나머지는 후보로 남긴다.
 
-| 역할 | 1차 후보 | 판단 |
+| 역할 | 채택·후보 | 판단 |
 | --- | --- | --- |
-| GUI 공정 카드·연결 편집 | Svelte Flow (`@xyflow/svelte`) | 일반 Svelte 컴포넌트로 공정 카드를 만들고 노드·연결 조작을 맡기는 방식. 공정 계층은 하위 흐름(`parentId`)으로 표시(§3.1) |
-| React를 선택할 때의 GUI 대안 | React Flow (`@xyflow/react`) | 프런트엔드 선택에 따라 대체. Svelte Flow와 동시에 사용할 이유는 없음 |
+| GUI 공정 카드·연결 편집 | React Flow (`@xyflow/react`) — 채택(ADR-0001) | 공정 카드를 React 컴포넌트(사용자 정의 노드)로 만들고 노드·연결 조작을 맡기는 방식. 공정 계층은 하위 흐름(`parentId`)으로 표시(§3.2) |
+| 웹 빌드 | SPA 정적 빌드 — 채택(ADR-0001). 빌드 도구는 Vite 등 | API 서버가 정적 파일을 함께 제공. SSR 프레임워크(Next.js 등)는 쓰지 않음(§3.2) |
+| Svelte를 전제로 한 GUI 후보 | Svelte Flow (`@xyflow/svelte`) | 검토했으나 채택하지 않음(ADR-0001). 앞선 검토의 1차 후보였음(§3.1) |
 | DAG 자동 배치 | Dagre (`@dagrejs/dagre`) | 초기 계층형 배치와 자동 정렬부터 검증. 공정 계층은 층마다 따로 실행(§4.1) |
 | 복잡한 배치의 대안 | ELK.js (`elkjs`) | 포트·연결선 경로의 요구가 커지거나, 펼친 상위 안의 하위를 바깥 노드와 함께 배치해야 할 때 검토 |
-| 그래프 자료구조·알고리즘 | Graphlib (`@dagrejs/graphlib`) | TypeScript/JavaScript에서 활용 가능. 순환 검사만 필요하면 작은 자체 함수도 선택지 |
-| Jira API 접근 | 서버 언어에 맞는 SDK 또는 작은 REST 어댑터 | 설치형 Jira 지원 여부를 우선 확인. SDK 때문에 서버 언어를 바꾸지 않음 |
+| 그래프 자료구조·알고리즘 | Graphlib (`@dagrejs/graphlib`) | TypeScript 서버(ADR-0001)의 도메인 모듈에서 활용 가능. 순환 검사만 필요하면 작은 자체 함수도 선택지. 도입 여부는 스파이크로 정함(§5.1) |
+| Jira API 접근 | 서버 JiraAdapter 뒤의 작은 REST 어댑터 — 채택(ADR-0001) | Jira 9.x 대상인 동안 REST 어댑터로 구현(§6.3). 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상을 재평가(§6.1). SDK 때문에 서버 언어를 바꾸지 않음 |
 | Confluence | 초기에는 URL 저장·표시 | 현재 요구에는 SDK나 페이지 본문 수집이 필요하지 않음 |
-| CLI 명령 해석 | Commander.js (`commander`) | 명령·옵션·도움말 처리를 재사용하고 Tevro API 호출은 직접 구현 |
+| CLI 명령 해석 | Commander.js (`commander`) — 채택(ADR-0001) | 명령·옵션·도움말 처리를 재사용하고 Tevro API 호출은 직접 구현. CLI는 Node.js + TypeScript(ADR-0001). 주 버전(14.x 또는 15.x)과 배포 형태는 ADR-0007에서 정함 |
 | 문서용 그래프 출력 | Mermaid | 주 GUI 편집기 대신 후속 내보내기 기능의 후보 |
 
 이 추천은 해당 라이브러리만 조합하면 제품 전체가 완성된다는 뜻이 아니다. 공정 데이터, 상태, 템플릿, 인증·권한, 저장, 외부 연동의 실패 복구는 Tevro의 구현 범위로 남는다. 각 후보의 기능 근거는 아래 절과 참고 자료에 정리한다.
@@ -31,7 +33,7 @@ Svelte 프런트엔드와 Node.js CLI를 선택한다는 조건에서의 1차 �
 
 | 역할 | 해결하는 문제 | 대표 후보 |
 | --- | --- | --- |
-| 그래프 편집·렌더링 | 노드와 연결선을 표시하고 드래그·선택·연결·확대·축소를 제공. 상위 공정 안에 하위 노드를 묶어 접기·펼치기 | Svelte Flow, React Flow, X6, Cytoscape.js, JointJS |
+| 그래프 편집·렌더링 | 노드와 연결선을 표시하고 드래그·선택·연결·확대·축소를 제공. 상위 공정 안에 하위 노드를 묶어 접기·펼치기 | React Flow(채택), Svelte Flow, X6, Cytoscape.js, JointJS |
 | 자동 배치 | 노드의 위치와 필요에 따라 연결선 경로를 계산 | Dagre, ELK.js |
 | 업무 모델·규칙 | 공정의 상태, 선행 조건, 템플릿 복제, Jira 매핑을 정의·검증·저장 | Tevro에서 구현 |
 
@@ -41,50 +43,109 @@ Svelte 프런트엔드와 Node.js CLI를 선택한다는 조건에서의 1차 �
 
 ## 3. GUI 공정·연결 편집
 
-### 3.1 Svelte Flow — 우선 후보
+### 3.1 Svelte Flow — 검토했으나 채택하지 않음(ADR-0001)
 
 - 패키지: `@xyflow/svelte`
 - 코어 라이브러리 라이선스: MIT
 - 공식 문서: [Svelte Flow][svelte-flow]
 - 저장소: [xyflow][xyflow]
 
-Svelte Flow는 노드 기반 편집기와 인터랙티브 다이어그램을 구성하는 라이브러리다. 노드 이동, 화면 이동·확대·축소, 선택, 연결 생성 같은 기본 동작을 제공한다. 사용자 정의 노드는 일반적인 Svelte 컴포넌트로 작성하고, 입력 요소나 버튼 등도 넣을 수 있다. [Svelte Flow][svelte-flow], [사용자 정의 노드][svelte-custom]
+앞선 검토(2026-09-26 작성, 2026-10-07 개정)에서는 Svelte 프런트엔드를 전제로 Svelte Flow를 우선 후보로 두었다. [ADR-0001](./adr/0001-tech-stack.md)에서 React를 채택했으므로(2026-10-08) 사용하지 않는다. 결정 이력으로 검토 당시 확인한 내용만 남긴다.
 
-공정 계층(PRD §6.9)을 표시할 하위 흐름(sub flow)도 제공한다. 2026-10-07에 공식 문서(2026-09-09 갱신판)로 확인한 내용은 다음과 같다. [Svelte Flow 하위 흐름][svelte-subflows]
+| 항목 | 검토 당시 확인한 내용 |
+| --- | --- |
+| 기본 동작 | 노드 이동, 화면 이동·확대·축소, 선택, 연결 생성 [Svelte Flow][svelte-flow] |
+| 사용자 정의 노드 | 일반 Svelte 컴포넌트로 작성하고 입력 요소나 버튼을 넣을 수 있음 [사용자 정의 노드][svelte-custom] |
+| 하위 흐름 | `parentId`로 상위 기준 상대 좌표에 배치, 노드 배열에서 상위 우선, `extent: 'parent'`로 이동 범위 제한, `group` 외 사용자 정의 노드도 상위 가능. 2026-10-07에 공식 문서(2026-09-09 갱신판)로 확인 [Svelte Flow 하위 흐름][svelte-subflows] |
+| Tevro가 구현할 범위 | 접기·펼치기, 하위 개수·완료 수 표시, 접힌 상태의 상위 간 연결만 표시. React Flow에서도 같다(§3.2) |
 
-- 노드에 `parentId`를 지정하면 그 노드는 상위 노드 안에 배치된다. 위치는 상위 노드의 왼쪽 위를 `{ x: 0, y: 0 }`으로 하는 상대 좌표다.
-- 노드 배열에서 상위 노드가 하위 노드보다 먼저 와야 한다.
-- 상위 노드의 크기가 정해져 있으면 `extent: 'parent'`로 하위 노드의 이동을 상위 영역 안으로 제한할 수 있다. 지정하지 않으면 하위 노드를 상위 바깥으로 끌 수 있다.
-- 상위 노드를 옮기면 하위 노드가 함께 움직인다.
-- 연결은 같은 상위 안의 노드끼리도, 하위 흐름과 바깥 노드 사이에도 만들 수 있다. 라이브러리는 다른 층과의 연결을 막지 않으므로 형제 규칙(F-H03)은 Tevro 서버가 검증한다(§5.2).
-- 기본 제공 `group` 노드 유형 외에 사용자 정의 노드도 상위로 쓸 수 있다.
-
-접기·펼치기, 하위 개수·완료 수 표시, 접힌 상태에서 상위 간 연결만 보이는 처리는 문서의 하위 흐름 기능에 포함되어 있지 않다. 하위 노드와 연결을 숨기고 상위 노드 크기를 바꾸는 방식으로 Tevro가 구현한다.
-
-| Tevro 기능 | 적용 방식 | 직접 구현할 부분 |
-| --- | --- | --- |
-| 공정 카드 표시 | 공정 하나를 노드 하나로 표현 | 제목·상태·기한·링크의 표시 구성 |
-| 선후관계 연결 | 노드의 연결 지점인 Handle과 방향 있는 연결선 사용 | 선행·후속 의미, 서버 저장, 순환 검증 |
-| 상태 수정 | 사용자 정의 노드 또는 상세 패널에 선택 UI 배치 | 상태 변경 API, 실패 처리, Jira 상태 원본 규칙 |
-| 내용 편집 | 선택한 노드에 대응하는 상세 패널 제공 | 설명 편집기와 저장 처리 |
-| 그래프 탐색 | 이동·확대·축소·선택·미니맵 등을 활용 | 기본 화면 구성과 선택 공정 강조 방식 |
-| 공정 추가·삭제 | Tevro의 도구 모음·상세 패널에서 노드 작업 수행 | 새 공정 ID 발급, 연결 정리, 삭제 영향 확인 |
-| 계층 표시(F-H07) | 하위 흐름(`parentId`)으로 상위 노드 안에 하위 배치 | 접기·펼치기, 개수·완료 수 표시, 접힌 상태의 상위 간 연결만 표시 |
-
-공정 카드를 `TaskNode.svelte` 같은 컴포넌트로 작성하는 방식이 적합하다. 다만 라이브러리에 노드 안 입력 UI를 넣을 수 있다는 것과, 완성된 공정 관리 폼을 제공한다는 것은 다르다.
-
-Tevro 적용 시 특히 확인할 사항은 한글 입력 중의 단축키 충돌, 텍스트 선택과 노드 드래그의 구분, 상태 선택 상자 조작, 링크 클릭, 긴 제목과 상세 패널의 사용성, 접기·펼치기 시 노드 크기 변경과 연결선 재계산, 깊은 중첩의 성능이다. 이는 채택 전 검증 항목이지 이미 검증된 성능·호환성 결과가 아니다.
-
-### 3.2 React Flow — React를 선택할 경우
+### 3.2 React Flow — 채택(ADR-0001)
 
 - 패키지: `@xyflow/react`
 - 코어 라이브러리 라이선스: MIT
 - 공식 문서: [React Flow][react-flow]
 - 저장소: [xyflow][xyflow]
+- 채택 기록: [ADR-0001](./adr/0001-tech-stack.md)(2026-10-08). 채택할 고정 버전은 아직 정하지 않았다.
 
-React Flow는 같은 계열의 React용 노드 편집 라이브러리다. 프런트엔드를 React로 선택한다면 이쪽을 사용한다. 그래프 편집 라이브러리 때문에 익숙한 Svelte를 반드시 버릴 필요는 없다. [xyflow][xyflow]
+React Flow는 Svelte Flow와 같은 xyflow 계열의 React용 노드 편집 라이브러리다. [React Flow][react-flow], [xyflow][xyflow] Tevro는 노드 이동, 화면 이동·확대·축소, 선택, 연결 생성 같은 기본 동작을 맡기고, 공정 카드를 React 컴포넌트로 작성한 사용자 정의 노드로 표현해 노드 안에 입력 요소나 버튼을 둘 계획이다. 이 기능 범위는 Svelte Flow 문서로 확인한 것이며(§3.1), React Flow 문서로는 확인 필요다.
 
-코어 라이브러리와 Pro 구독은 구분한다. React Flow Pro는 고급 예제·템플릿·지원 등의 유료 제공 범위를 포함하지만, 코어 라이브러리 사용 자체에 Pro 구독이 필수인 것은 아니다. 유료 예제나 템플릿을 코어와 같은 조건으로 복제해도 된다고 가정하지 않는다. [React Flow Pro][react-pro]
+앞선 검토는 이 절을 'React를 선택할 경우'의 대안으로 두었고, 그래프 편집 라이브러리 때문에 익숙한 Svelte를 반드시 버릴 필요는 없다고 보았다. ADR-0001에서 프런트엔드를 React로 정해 React Flow가 채택 라이브러리가 되었다.
+
+2026-10-08에 npm 레지스트리에서 확인한 패키지 정보는 다음과 같다.
+
+| 항목 | 확인 내용 | 출처 |
+| --- | --- | --- |
+| 최신 안정판 | 12.12.0(`latest`, 2026-09-24 게시). `next` 태그는 12.0.0-next.5로 최신 안정판보다 오래된 판이다 | [npm 메타데이터][xyflow-react-npm] |
+| 라이선스 | MIT | [npm 메타데이터][xyflow-react-npm] |
+| peer 의존성 | `react`·`react-dom` `>=17`. `@types/react`·`@types/react-dom` `>=17`은 `peerDependenciesMeta`에서 optional | [12.12.0 메타데이터][xyflow-react-npm-latest] |
+| 런타임 의존성 | `zustand` `^4.4.0`, `classcat` `^5.0.3`, `@xyflow/system` `0.0.83` | [12.12.0 메타데이터][xyflow-react-npm-latest] |
+| React | 최신 안정판 19.3.0(`latest`, 2026-09-09 게시). 최신 안정 주 버전은 19. `canary`·`experimental` 태그가 따로 있다 | [react npm 메타데이터][react-npm] |
+
+React 19는 peer 범위 `>=17`에 든다. 채택 버전은 `latest` 안정판에서 고르고 `next`·`canary`·`experimental` 태그는 쓰지 않는 것을 제안한다. 런타임 의존성 세 개도 라이선스·반입 검토 대상이다(§11.1).
+
+공정 계층(PRD §6.9)은 하위 흐름(sub flow)으로 표시한다. 2026-10-08에 공식 문서로 확인한 내용은 다음과 같다. [React Flow 하위 흐름][react-subflows]
+
+- 노드에 `parentId`를 지정하면 하위 노드가 된다. 이 이름은 11.11.0에서 `parentNode`를 바꾼 것이다.
+- `parentId`를 지정한 노드의 위치는 상위 기준 상대 좌표다. `{ x: 0, y: 0 }`이 상위 노드의 왼쪽 위 모서리다.
+- 문서는 `parentId`가 하는 일이 상대 위치 지정 하나뿐이며, 마크업상 실제 자식 요소가 되는 것은 아니라고 설명한다.
+- `nodes` 또는 `defaultNodes` 배열에서 상위 노드가 하위 노드보다 먼저 와야 올바르게 처리된다(Order of Nodes 절).
+- 하위 노드에 `extent: 'parent'`를 주면 상위 노드 밖으로 끌어낼 수 없다. 이 옵션이 없으면 하위를 상위 밖으로 드래그하거나 배치할 수 있지만, 상위를 움직이면 하위도 함께 움직인다.
+- 예제는 상위에 `type: 'group'`을 쓰지만 다른 어떤 유형도 상위로 쓸 수 있다. `group`은 핸들이 없는 편의용 유형이고, 기본 노드 유형을 상위로 쓰는 절도 있다. 사용자 정의 노드를 따로 명시하지는 않지만 '다른 어떤 유형'에 포함되는 것으로 읽힌다.
+- 그룹 안의 노드끼리도, 하위 흐름에서 바깥 노드로도 연결할 수 있다. 라이브러리는 다른 층과의 연결을 막지 않으므로 형제 규칙(F-H03)은 Tevro 서버가 검증한다(§5.2).
+- 연결선은 기본적으로 노드 아래에 그려지지만, 상위가 있는 노드에 연결된 연결선은 노드 위에 그려진다. 겹침 순서는 `zIndex` 옵션(예: `defaultEdgeOptions = { zIndex: 1 }`)으로 조정한다.
+
+Tevro에 적용할 때의 제안은 다음과 같다.
+
+- 상위 공정도 사용자 정의 노드로 그린다. 사용자 정의 노드를 상위로 쓰는 동작은 문서에 따로 명시되지 않았으므로 스파이크에서 확인한다.
+- 화면용 노드 배열을 만들 때 상위 공정을 하위 공정보다 앞에 둔다. 서버 응답의 순서에 기대지 않고 변환 단계에서 정렬한다.
+- `parentId`는 화면의 상대 위치 지정일 뿐이다. 포함관계의 원본은 공정이 갖는 상위 공정 ID다(§9). 하위 노드를 상위 영역 밖으로 끌어내거나 다른 상위 안으로 끌어다 놓는 것으로 포함관계를 바꾸지 않으므로(F-H08), 하위 노드에 `extent: 'parent'`를 주는 방식을 우선 검토한다.
+
+접기·펼치기, 하위 개수·완료 수 표시, 접힌 상태에서 상위 간 연결만 보이는 처리는 위 하위 흐름 기능에 들어 있지 않다. 공식 접기·펼치기 예제는 Pro 전용이다(아래 예제 표). 하위 노드와 연결을 숨기고 상위 노드 크기를 바꾸는 방식으로 Tevro가 구현한다.
+
+| Tevro 기능 | 적용 방식 | 직접 구현할 부분 |
+| --- | --- | --- |
+| 공정 카드 표시 | 공정 하나를 사용자 정의 노드(React 컴포넌트) 하나로 표현 | 제목·상태·기한·링크의 표시 구성 |
+| 선후관계 연결 | 노드의 연결 지점인 Handle과 방향 있는 연결선 사용 | 선행·후속 의미, 서버 저장, 순환 검증 |
+| 상태 수정 | 사용자 정의 노드 또는 상세 패널에 선택 UI 배치 | 상태 변경 API, 실패 처리, Jira 상태 원본 규칙 |
+| 내용 편집 | 선택한 노드에 대응하는 상세 패널 제공 | 설명 편집기와 저장 처리 |
+| 그래프 탐색 | 이동·확대·축소·선택·미니맵 등을 활용 | 기본 화면 구성과 선택 공정 강조 방식 |
+| 공정 추가·삭제 | Tevro의 도구 모음·상세 패널에서 노드 작업 수행 | 새 공정 ID 발급, 연결 정리, 삭제 영향 확인 |
+| 계층 표시(F-H07) | 하위 흐름(`parentId`)으로 상위 노드 안에 하위 배치. 상위 공정도 사용자 정의 노드 | 접기·펼치기, 개수·완료 수 표시, 접힌 상태의 상위 간 연결만 표시 |
+
+위 표의 '적용 방식' 열에 적은 React Flow 기능(Handle, 미니맵, 사용자 정의 노드 안의 선택 UI)은 Svelte Flow 검토 때의 표를 옮긴 것이다. React Flow 문서로는 확인 필요다.
+
+공정 카드를 `TaskNode.tsx` 같은 React 컴포넌트로 작성하는 방식이 적합하다. 다만 라이브러리에 노드 안 입력 UI를 넣을 수 있다는 것과, 완성된 공정 관리 폼을 제공한다는 것은 다르다.
+
+Tevro 적용 시 특히 확인할 사항은 한글 입력 중의 단축키 충돌, 텍스트 선택과 노드 드래그의 구분, 상태 선택 상자 조작, 링크 클릭, 긴 제목과 상세 패널의 사용성, 접기·펼치기 시 노드 크기 변경과 연결선 재계산, 상위가 있는 노드에 연결된 연결선의 겹침 순서, 깊은 중첩의 성능이다. 이는 스파이크에서 검증할 항목이지 이미 검증된 성능·호환성 결과가 아니다.
+
+코어 라이브러리와 Pro 구독은 구분한다. Pro 페이지는 React Flow를 MIT 라이선스 오픈소스라고 하며 앞으로도 그렇다고 명시한다. FAQ는 구독 없이 상업 프로젝트에 써도 되느냐는 질문에 MIT License를 근거로 그렇다고 답한다. React Flow Pro는 별도 라이브러리가 아니라 오픈소스 라이브러리를 중심으로 한 유료 서비스다. [React Flow Pro][react-pro]
+
+공정 계층과 관련된 예제의 제공 조건은 다음과 같다. 2026-10-08에 예제 목록과 각 예제 페이지로 확인했다. 배치 예제는 §4.1, 순환 방지 예제는 §5.2에 둔다. [React Flow 예제][rf-examples], [React Flow Pro 예제][rf-pro-examples]
+
+| 예제 | 제공 조건 | 내용 | Tevro 관련 |
+| --- | --- | --- | --- |
+| Sub Flow | 무료 | 하위 흐름 기본 예제 | 계층 표시(F-H07)의 출발점 |
+| Expand and Collapse | Pro | `useExpandCollapse` 훅으로 전체 그래프는 유지하고 보이는 부분만 렌더링. 의존성은 `@xyflow/react`, `@dagrejs/dagre` [예제][rf-expand-collapse] | 접기·펼치기(F-H07)에 해당. Tevro가 직접 구현 |
+| Selection Grouping | Pro | Shift 선택 후 그룹화·해제 | 상위 지정은 영향을 확인하는 명시적 작업이므로(F-H08) 그대로 쓰지 않음 |
+| Parent Child Relation | Pro | 드래그로 그룹에 붙이기·떼기, 상대 좌표 변환 | 드래그로 포함관계를 바꾸지 않으므로(§9) 그대로 쓰지 않음 |
+
+'Dynamic Grouping'이라는 이름의 예제는 두 목록 모두에 없다. 이름이 바뀌었거나 다른 예제로 합쳐졌는지는 문서에 나와 있지 않다. 기능상 가장 가까운 것은 Selection Grouping과 Dynamic Layouting(둘 다 Pro)이다.
+
+Pro 예제의 사용 조건은 다음과 같다. 2026-10-08에 Pro 페이지와 xyflow Pro License(Version 1.0, 2026-08-31 갱신)로 확인했다. 공개 문구의 요약이며 법적 검토 결과가 아니다. [React Flow Pro][react-pro], [xyflow Pro License][xyflow-pro-license]
+
+| 항목 | 확인 내용 |
+| --- | --- |
+| 요금제(월간 표시 기준) | Starter 월 169달러(팀원 1명 초대), Professional 월 289달러(팀원 5명), Enterprise 견적 요청(팀원 10명, Pro 예제·템플릿 영구 접근). Pro 예제 접근은 세 요금제 모두 포함 |
+| 사용 범위 | FAQ는 회사 안의 상업·비상업 프로젝트에 제한 없이 쓸 수 있다고 함. 라이선스는 유효한 구독을 조건으로 영구·비독점·양도 불가 라이선스를 줌 |
+| 허용 | 사용·수정·앱 통합, Pro 예제를 포함한 애플리케이션의 배포 |
+| 금지 | 독립 예제나 템플릿 형태의 재배포, 구독 접근 공유, 저작권 표시 제거, xyflow 사업과 직접 경쟁하는 사용 |
+| 구독 종료 | 이미 얻은 콘텐츠의 권리는 구독이 끝나도 유지 |
+| 라이선스 종료 | 위반 시에만 자동 종료. 종료되면 그 앱의 신규 배포는 멈춰야 하지만 이미 배포된 앱은 계속 동작해도 됨 |
+| 공개 저장소 | 공개 GitHub 저장소에 소스를 올리는 경우는 언급 없음. 확인 필요 |
+
+유료 예제나 템플릿을 코어와 같은 조건으로 복제해도 된다고 가정하지 않는다. Tevro는 코어(MIT)만으로 구현하고 Pro 구독을 전제로 하지 않는 것을 제안한다. Pro 예제를 참고하거나 도입하려면 구독 여부, 위 조건, 사내 반입 승인(§11.1)을 먼저 확인한다.
+
+웹은 SPA 정적 빌드로 만들고 API 서버가 정적 파일을 함께 제공한다. Next.js 같은 SSR 프레임워크는 쓰지 않는다(ADR-0001). 빌드 도구는 Vite 등을 쓴다. 2026-10-08 확인 기준 `vite`의 최신 안정판은 8.3.3(2026-10-06 게시, MIT)이고 최신 안정 주 버전은 8이다. `engines.node`는 `^20.19.0 || >=22.12.0`이다. ADR-0001에서 채택한 Node.js 26은 이 범위에 들지만, 실제 도구 호환성은 스파이크에서 확인한다(§12). [Vite npm 메타데이터][vite-npm]
 
 ### 3.3 대안 후보
 
@@ -96,9 +157,9 @@ React Flow는 같은 계열의 React용 노드 편집 라이브러리다. 프런
 
 기능·라이선스 근거: [X6 저장소][x6], [X6 History 플러그인][x6-history], [X6 Cell API][x6-cell-api], [Cytoscape.js][cytoscape], [edgehandles][edgehandles], [Cytoscape.js expand-collapse 확장][cytoscape-expand-collapse], [JointJS 저장소][jointjs].
 
-공정 계층(F-H07)에 따라 중첩 노드 지원이 비교 항목에 들어간다. 중첩을 지원해도 접기·펼치기와 개수·완료 수 표시는 Tevro가 구현해야 하는 점은 Svelte Flow와 같다.
+공정 계층(F-H07)에 따라 중첩 노드 지원이 비교 항목에 들어간다. 중첩을 지원해도 접기·펼치기와 개수·완료 수 표시는 Tevro가 구현해야 하는 점은 React Flow와 같다(§3.2).
 
-초기에는 Svelte Flow와 X6 정도를 작은 공정 그래프로 비교하면 된다. 모든 후보로 제품 전체를 구현하거나, 아직 필요하지 않은 편집 기능 수만으로 선택하지 않는다. 별도 확장을 도입할 때는 확장 자체의 라이선스와 버전 호환성도 확인한다.
+앞선 검토는 초기에 Svelte Flow와 X6 정도를 작은 공정 그래프로 비교하자고 제안했다. ADR-0001에서 React Flow를 채택했으므로, 대안 후보는 스파이크에서 React Flow의 실제 한계가 드러날 때 비교한다. 모든 후보로 제품 전체를 구현하거나, 아직 필요하지 않은 편집 기능 수만으로 선택하지 않는다. 별도 확장을 도입할 때는 확장 자체의 라이선스와 버전 호환성도 확인한다.
 
 ## 4. DAG 자동 배치
 
@@ -108,7 +169,18 @@ React Flow는 같은 계열의 React용 노드 편집 라이브러리다. 프런
 - 라이선스: MIT
 - 공식 저장소: [Dagre][dagre]
 
-Dagre는 방향 있는 그래프를 계층적으로 배치하는 라이브러리다. 노드 크기와 연결 관계를 전달하고, 계산된 좌표를 그래프 편집기의 노드 위치에 적용하는 방식으로 사용한다. Flow 계열의 공식 레이아웃 안내에서도 외부 배치 엔진으로 다룬다. [Dagre][dagre], [Flow 레이아웃 안내][flow-layout]
+Dagre는 방향 있는 그래프를 계층적으로 배치하는 라이브러리다. 노드 크기와 연결 관계를 전달하고, 계산된 좌표를 그래프 편집기의 노드 위치에 적용하는 방식으로 사용한다. React Flow의 공식 레이아웃 안내에서도 외부 배치 엔진으로 다룬다. [Dagre][dagre], [React Flow 레이아웃 안내][flow-layout]
+
+React Flow의 Dagre 예제(Dagre Tree)는 무료로 공개되어 있다. Pro 표시나 Pro License 표기, Download ZIP이 없고 전체 소스 코드가 페이지에 나온다. 코드는 `@dagrejs/dagre`를 쓴다. 페이지는 더 발전된 배치 라이브러리로 d3-hierarchy와 elkjs를 함께 권한다. 2026-10-08에 확인했다. [React Flow Dagre 예제][rf-dagre]
+
+레이아웃 범주의 다른 예제는 제공 조건이 갈린다. Pro 예제는 코어와 같은 조건으로 복제하지 않는다(§3.2). [React Flow Pro 예제][rf-pro-examples]
+
+| 제공 조건 | 레이아웃 범주 예제 |
+| --- | --- |
+| 무료(Pro 표시 없음) | Dagre Tree, Elkjs Tree, Elkjs Multiple Handles, Horizontal Flow, Node Collisions |
+| Pro(xyflow Pro License) | Auto Layout(`useAutoLayout` 훅으로 dagre·d3-hierarchy·elkjs 전환), Dynamic Layouting(d3-hierarchy 기반 자동 배치), Force Layout |
+
+Tevro의 초기 배치는 무료 Dagre 예제와 Dagre 문서를 기준으로 구현한다.
 
 초기 Tevro에서는 다음 흐름을 제안한다.
 
@@ -122,6 +194,8 @@ Dagre는 방향 있는 그래프를 계층적으로 배치하는 라이브러리
 
 1. 펼친 상위 공정마다 그 하위 공정들만으로 Dagre를 실행한다. 결과의 전체 크기가 그 상위 노드의 크기가 된다. 가장 깊은 층부터 올라온다.
 2. 접힌 상위는 하나의 노드로, 펼친 상위는 1단계에서 계산한 크기의 노드로 다루어 그 층의 형제 공정들을 Dagre로 배치한다.
+
+React Flow에서 하위 노드 위치는 상위 기준 상대 좌표다(§3.2). 따라서 1단계에서 하위 공정들만으로 계산한 좌표를 그 상위 안의 위치로 옮겨 쓰기 쉽다. 좌표 기준점과 상위 안쪽 여백은 구현에서 맞춘다.
 
 층마다 그래프가 작아지므로 입력이 단순하고, 접기·펼치기로 상위 노드 크기가 바뀌면 해당 층과 그 조상 층만 다시 배치하면 된다. 이 방식이면 ELK.js의 중첩 배치가 초기에는 필수가 아니다(§4.2). 수동으로 조정한 위치는 층별로 보존한다. 층별 좌표 저장 규칙은 PRD §13-4에서 정한다.
 
@@ -169,11 +243,13 @@ Mermaid는 텍스트 정의를 다이어그램으로 표현하는 도구다. 현
 
 기능 근거: [Graphlib 저장소 및 API 문서][graphlib].
 
-백엔드가 TypeScript/JavaScript라면 도메인 모듈 내부에서 활용할 수 있다. 다른 언어의 서버를 선택하면 같은 규칙을 해당 서버에서 구현하거나 그 언어의 라이브러리를 검토한다. Graphlib를 사용하기 위해 별도 Node.js 서버를 추가할 필요는 없다.
+ADR-0001에서 서버를 TypeScript(Node.js)로 정했으므로 서버 도메인 모듈 내부에서 활용할 수 있다. Graphlib와 작은 자체 함수(§5.2) 중 무엇을 쓸지는 아직 정하지 않았고 스파이크로 비교한다(ADR-0001).
 
 ### 5.2 서버 검증은 반드시 유지
 
-Flow의 화면에서 순환 연결을 방지하는 예제를 적용하더라도 그것만으로 충분하지 않다. Tevro는 CLI에서도 관계를 변경하므로 GUI와 CLI의 모든 변경을 서버에서 검증해야 한다. [React Flow 순환 방지 예제][prevent-cycles]
+React Flow에는 화면에서 순환 연결을 막는 무료 예제 'Preventing Cycles'가 있다(Interaction 범주, Pro 표시 없음). `isValidConnection` 콜백과 `getOutgoers` 유틸로 새 연결이 순환을 만드는지 검사하며, 소스에 `hasCycle` 함수가 들어 있다. 2026-10-08에 확인했다. [React Flow 순환 방지 예제][prevent-cycles]
+
+이 방식을 화면의 사전 피드백으로 적용하더라도 그것만으로 충분하지 않다. Tevro는 CLI에서도 관계를 변경하므로 GUI와 CLI의 모든 변경을 서버에서 검증해야 한다. 다른 층의 공정을 잇는 연결(F-H03)도 같은 콜백에서 미리 막을 수 있지만 최종 판정은 서버가 한다.
 
 Tevro가 검증해야 할 기본 규칙은 다음과 같다.
 
@@ -229,11 +305,11 @@ Tevro가 검증해야 할 기본 규칙은 다음과 같다.
 
 일반적인 설치형 지원이 정확히 사내 Jira 9.15.1의 모든 설정과 호환된다는 의미는 아니다. 실제 사이트의 생성 화면 필수 필드와 계정 권한을 포함해 테스트한다.
 
-### 6.3 TypeScript 서버라면 작은 REST 어댑터도 적절
+### 6.3 TypeScript 서버에서는 작은 REST 어댑터도 적절
 
 Tevro가 초기부터 Jira API 전체를 사용할 필요는 없다. 이슈 생성과 이슈 간 링크 생성은 공식 REST API로 제공되므로, 필요한 범위만 호출하는 어댑터도 합리적인 선택이다. Jira 9.15.1 REST 문서에서도 `POST /rest/api/2/issue`(단건 생성), `POST /rest/api/2/issue/bulk`(일괄 생성), `POST /rest/api/2/issueLink`, `GET /rest/api/2/issueLinkType`을 확인할 수 있다. [Jira 이슈 생성 API 예제][jira-create], [Jira 이슈 링크 API][jira-link-api], [Jira 9.15.1 REST 문서][jira-rest-9151]
 
-TypeScript 서버에서 Jira 9.x를 대상으로 하면 유지보수 중인 Node.js SDK는 사실상 없다. `jira.js`는 9.x를 지원하지 않고(§6.1), `jira-client`는 2022-11 이후 릴리스가 없다(§6.2). 따라서 이 조건에서는 작은 REST 어댑터가 현실적인 기본안이라고 제안한다. 서버 언어와 Jira 연동 방식은 아직 정하지 않았다. 서버 언어 결정은 [ADR-0001](./adr/0001-tech-stack.md)에서 다룬다.
+TypeScript 서버에서 Jira 9.x를 대상으로 하면 유지보수 중인 Node.js SDK는 사실상 없다. `jira.js`는 9.x를 지원하지 않고(§6.1), `jira-client`는 2022-11 이후 릴리스가 없다(§6.2). [ADR-0001](./adr/0001-tech-stack.md)에서 서버를 TypeScript로 정했으므로 이 조건이 Tevro에 그대로 적용된다. 이에 따라 ADR-0001은 서버의 JiraAdapter 경계 뒤에 작은 REST 어댑터를 두기로 정했다(2026-10-08 채택). 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판을 재평가한다(§6.1).
 
 ```text
 JiraAdapter — 개념 인터페이스, 최종 메서드 명세 아님
@@ -256,8 +332,8 @@ JiraAdapter — 개념 인터페이스, 최종 메서드 명세 아님
 
 권장 선택 원칙은 다음과 같다.
 
-- Python 서버를 선택했다면 `atlassian-python-api` 또는 `pycontribs/jira`를 비교한다.
-- TypeScript 서버라면 작은 REST 어댑터와 검증된 Node.js SDK를 비교한다. 대상이 Jira 9.x인 동안은 비교할 SDK가 사실상 없으므로 REST 어댑터를 기본안으로 검토한다. 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판과 비교한다.
+- Python 서버를 선택했다면 `atlassian-python-api` 또는 `pycontribs/jira`를 비교한다. ADR-0001에서 TypeScript 서버를 채택했으므로 현재는 해당하지 않는다.
+- TypeScript 서버(ADR-0001 채택)에서는 작은 REST 어댑터로 연동한다(ADR-0001). 대상이 Jira 9.x인 동안은 비교할 Node.js SDK가 사실상 없다. 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판과 REST 어댑터를 다시 비교한다.
 - Jira SDK 하나를 사용하기 위해 별도 언어의 실행환경을 추가하지 않는다.
 - SDK 선택과 관계없이 인증·요청·응답 처리는 어댑터 뒤로 숨기고, 공정·템플릿 규칙이 SDK의 객체 구조에 직접 의존하지 않게 한다.
 
@@ -314,7 +390,7 @@ Jira 이슈에 외부 페이지 링크를 달아주는 경우에는 Jira Remote 
 | 15.x (15.0.0, 2026-05-29) | ESM 전용. Node.js 22.12.0 이상 필요 |
 | 14.x | 2027-05까지 보안 업데이트 제공 |
 
-현재 지원되는 Node.js LTS 계열(22.12.0 이상의 22, 24)은 15.x의 조건을 충족한다. 20 계열은 2026-04-30에 지원이 끝났다. [Node.js 릴리스 일정][node-release] 따라서 이 변경이 Commander.js 후보 판단을 바꾸지는 않는다. 영향은 CLI를 실행할 호스트의 Node.js 버전과 CLI 배포 형태(Node 패키지 또는 런타임을 포함한 단일 실행 파일) 결정 수준이며, 이 결정은 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다. 채택할 주 버전은 아직 정하지 않았다.
+현재 지원되는 Node.js LTS 계열(22.12.0 이상의 22, 24)은 15.x의 조건을 충족한다. ADR-0001에서 채택한 Node.js 26(2026-10-28 LTS 전환 예정, 2029-04-30 EOL)도 이 조건을 충족한다. 20 계열은 2026-04-30에 지원이 끝났다. [Node.js 릴리스 일정][node-release] 따라서 이 변경이 Commander.js 채택(ADR-0001)을 바꾸지는 않는다. 영향은 CLI를 실행할 호스트의 Node.js 버전과 CLI 배포 형태(Node 패키지 또는 런타임을 포함한 단일 실행 파일) 결정 수준이며, 이 결정은 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다. Commander.js의 채택 주 버전(14.x 또는 15.x)은 아직 정하지 않았고, ADR-0007에서 정한다.
 
 ```sh
 # 문법 예시이며 최종 CLI 계약이나 실행 가능한 구현을 의미하지 않음
@@ -335,12 +411,12 @@ Jira 일괄 생성처럼 외부 데이터를 만드는 명령에는 미리 보�
 
 ## 9. 권장 연결 구조와 데이터 경계
 
-아래 구조는 역할 분리를 설명하는 제안이다. 서버 프레임워크·DB·배포 방식은 미정이다.
+아래 구조는 역할 분리를 설명하는 제안이다. 서버·웹·CLI는 TypeScript(Node.js 26)로, 웹은 React SPA 정적 빌드로 정했다(ADR-0001). HTTP 프레임워크([ADR-0006](./adr/0006-server-api-contract.md))·DB([ADR-0003](./adr/0003-storage-and-concurrency.md))·배포 방식([ADR-0002](./adr/0002-deployment-packaging.md))은 미정이다.
 
 ```text
-브라우저 GUI
-  ├─ 공정 카드·상세 패널: Tevro
-  ├─ 노드·연결 조작: Svelte Flow 또는 React Flow (계층은 하위 흐름)
+브라우저 GUI (React SPA, 서버가 정적 파일 제공)
+  ├─ 공정 카드·상세 패널: Tevro (React 컴포넌트)
+  ├─ 노드·연결 조작: React Flow (계층은 하위 흐름)
   └─ 자동 배치: Dagre (층마다 실행), 필요 시 ELK.js
           │
           │ Tevro 서버 API
@@ -348,7 +424,7 @@ Jira 일괄 생성처럼 외부 데이터를 만드는 명령에는 미리 보�
 CLI ──────┤
 Commander │
           ▼
-Tevro 서버
+Tevro 서버 (Node.js + TypeScript)
   ├─ 인증·권한·입력 검증
   ├─ 공정·계층·종속성·상태 규칙
   ├─ 템플릿 복제와 실행본 분리
@@ -376,10 +452,10 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 
 | 영역 | 재사용 가능한 기반 | Tevro의 책임 |
 | --- | --- | --- |
-| GUI | Flow 계열 또는 다른 그래프 편집기 | 공정 카드·상세 패널·상태 편집 경험 |
+| GUI | React Flow(ADR-0001 채택) | 공정 카드·상세 패널·상태 편집 경험 |
 | 자동 정렬 | Dagre 또는 ELK.js | 크기·관계 변환, 수동 위치 보존 정책 |
 | 그래프 검증 | Graphlib 또는 자체 순수 함수 | 프로젝트 경계·ID·중복·순환 규칙과 서버 적용 |
-| 계층 | Flow 계열 하위 흐름 | 트리 검증, 형제 규칙, 상속 판정, 자동 완료, 접기·펼치기 집계 |
+| 계층 | React Flow 하위 흐름(`parentId`) | 트리 검증, 형제 규칙, 상속 판정, 자동 완료, 접기·펼치기 집계 |
 | 상태 | 폼 UI·조회 라이브러리 등 | 실행 상태와 선행 조건의 구분, 비강제 진행 |
 | 템플릿 | 일반 저장·복사 기능 | 새 ID, 새 공정끼리 관계 복제, 실행 상태·Jira 매핑 초기화 |
 | Jira | REST API·SDK | 매핑, 필수 필드 처리, 일부 실패·중복·결과 미확인 복구 |
@@ -395,7 +471,7 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 
 앞의 라이선스 표기는 코어 저장소 또는 패키지 메타데이터를 바탕으로 정리한 후보 정보다. 사내 도입 승인이나 모든 배포 형태의 법적 적합성을 보장하지 않는다.
 
-채택할 버전에 대해 LICENSE·NOTICE·저작권 표시, 직접·전이 의존성, 추가 플러그인, 유료 예제·템플릿의 사용 조건을 확인한다. MIT 후보라는 이유로 모든 예제·아이콘·확장까지 같은 조건이라고 가정하지 않는다. 특히 ELK.js와 JointJS는 MIT 후보들과 별도로 조건을 확인한다.
+채택할 버전에 대해 LICENSE·NOTICE·저작권 표시, 직접·전이 의존성, 추가 플러그인, 유료 예제·템플릿의 사용 조건을 확인한다. MIT 후보라는 이유로 모든 예제·아이콘·확장까지 같은 조건이라고 가정하지 않는다. 예를 들어 React Flow 코어는 MIT이지만 Pro 예제·템플릿은 xyflow Pro License를 따른다(§3.2). 특히 ELK.js와 JointJS는 MIT 후보들과 별도로 조건을 확인한다.
 
 공개 저장소의 현재 파일은 바뀔 수 있다. 최종 채택 기록에는 패키지명, 고정 버전, 소스 태그 또는 커밋, 라이선스 근거, 반입한 배포물의 식별 정보를 남긴다.
 
@@ -427,40 +503,51 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 | 순환 방지 | C → A 추가 시 GUI와 CLI 모두 서버에서 거부 | F-D04, F-D06 |
 | 선행 조건 | C에 B 미완료를 표시하되 C의 진행 상태 변경은 차단하지 않음 | F-S03, F-S04 |
 | 자동 배치 | 카드 크기·긴 제목을 고려하고 수동 위치와 자동 정렬을 구분 | F-G05 |
-| 계층 표시 | 접기·펼치기와 개수·완료 수 표시, 접힌 상태에서 상위 간 연결만 | F-H07 |
+| 계층 표시 | 사용자 정의 상위 노드 안의 하위 배치, 접기·펼치기와 개수·완료 수 표시, 접힌 상태에서 상위 간 연결만 | F-H07 |
 | 계층 검증 | 다른 층 연결·자손 상위 지정이 GUI·CLI 모두 서버에서 거부 | F-H02, F-H03, AC-27, AC-29 |
 | 상속·자동 완료 | X·Y 선행에 A 포함, X·Y 완료 시 개발 자동 완료 | F-H04, F-H05, AC-25, AC-28 |
 | 템플릿 | 두 프로젝트의 새 ID·관계·상태·Jira 매핑이 독립적 | F-T04~F-T08 |
 | Jira 시험 연동 | 시험용 이슈 생성·링크 방향·상태 조회를 확인하고 부분 실패 표시 | F-J01, F-J05~F-J14 |
 | GUI·CLI 일치 | 같은 공정 ID와 저장 결과를 양쪽에서 확인 | F-C01, F-C04, F-C08 |
 | 폐쇄망 | 외부 인터넷 없이 기본 기능이 동작 | N-01~N-03 |
+| Node.js 26 도구 호환성 | React·React Flow 웹 빌드(Vite 등)와 서버·CLI 실행이 Node.js 26에서 동작 | ADR-0001 |
 
-위 ID는 [제품 요구사항](./product-requirements.md)의 항목이다. 시험용 Jira 이슈 생성도 외부 데이터 변경이므로 명시적으로 정한 시험 대상과 권한 범위에서 수행한다. 이 문서는 그 실행을 완료했다고 주장하지 않는다.
+위 F·N·AC ID는 [제품 요구사항](./product-requirements.md)의 항목이다. 시험용 Jira 이슈 생성도 외부 데이터 변경이므로 명시적으로 정한 시험 대상과 권한 범위에서 수행한다. 이 문서는 그 실행을 완료했다고 주장하지 않는다.
 
 ## 13. 현재 결론과 미결정 사항
 
-**우선 검증할 조합은 Svelte Flow + Dagre + Commander.js다.** Graphlib는 필요한 그래프 연산과 서버 언어에 따라 추가한다. 프런트엔드가 React로 정해지면 React Flow로 대체한다. 계층 요구로 그래프 편집기는 하위 흐름(중첩 노드) 지원이 필수 확인 항목이 되었다. Svelte Flow의 하위 흐름은 공식 문서로 확인했고(§3.1), 접기·펼치기와 층별 배치는 Tevro가 구현한다(§4.1).
+**우선 검증할 조합은 React Flow + Dagre + Commander.js다.** React Flow는 [ADR-0001](./adr/0001-tech-stack.md)에서 채택한 React 프런트엔드의 그래프 라이브러리다. Commander.js도 ADR-0001에서 CLI 명령 해석 라이브러리로 채택했고, 주 버전은 ADR-0007에서 정한다. Dagre는 채택한 TypeScript 단일 언어 구성에서 쓸 후보이며, 고정 버전과 함께 스파이크로 확인한다. 앞선 검토의 1차 조합은 Svelte Flow + Dagre + Commander.js였고, 프런트엔드가 React로 정해지면 React Flow로 대체한다고 적었다. ADR-0001에서 React를 채택해 그래프 라이브러리만 React Flow로 바뀌었고 Svelte Flow는 채택하지 않았다(§3.1). Graphlib 도입 여부는 작은 자체 함수와 비교해 정한다. 계층 요구로 그래프 편집기는 하위 흐름(중첩 노드) 지원이 필수 확인 항목이 되었다. React Flow의 하위 흐름은 공식 문서로 확인했고(§3.2), 접기·펼치기와 층별 배치는 Tevro가 구현한다(§4.1). 공식 접기·펼치기 예제는 Pro 전용이므로 코어(MIT)만으로 구현하는 것을 제안한다(§3.2).
 
-**Jira는 서버 언어를 정한 다음 SDK와 작은 REST 어댑터 중 선택한다.** 설치형 Jira 지원과 실제 사내 설정에서의 동작을 먼저 확인한다. Confluence는 현재 요구대로 링크 저장부터 시작한다.
+**Jira는 TypeScript 서버의 JiraAdapter 경계 뒤에 작은 REST 어댑터로 연동한다(ADR-0001 채택).** 대상이 Jira 9.x인 동안 이 방식을 쓰고, 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판을 재평가한다(§6.1, §6.3). 실제 사내 설정에서의 동작은 먼저 확인한다. Confluence는 현재 요구대로 링크 저장부터 시작한다.
 
-아직 결정하지 않은 사항은 프런트엔드 프레임워크, 서버·DB·인증 방식, CLI 런타임과 배포 형태, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira SDK 및 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시하며, 기존 제품 요구사항의 기능 범위를 임의로 확대하거나 기술 선택을 확정하지 않는다.
+서버 언어(TypeScript 단일), 프런트엔드 프레임워크(React), 웹 빌드 방식(SPA 정적 빌드), Node.js 주 버전(26 LTS), CLI 구성(Node.js + TypeScript + Commander.js), Jira 연동 방식(작은 REST 어댑터)은 ADR-0001에서 결정했다. 아직 결정하지 않은 사항은 HTTP 프레임워크(ADR-0006), DB·인증 방식, 폐쇄망 배포 형태(ADR-0002), CLI 배포 형태와 Commander.js 주 버전(ADR-0007), Graphlib 도입 여부, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시한다. 기존 제품 요구사항의 기능 범위를 임의로 확대하지 않으며, 기술 선택은 ADR에서 확정한다.
 
-착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 제안 상태로 정리되어 있다. 프런트엔드·서버·CLI 기술 구성은 [ADR-0001](./adr/0001-tech-stack.md), 폐쇄망 배포 형태는 [ADR-0002](./adr/0002-deployment-packaging.md), 저장소와 동시 수정은 [ADR-0003](./adr/0003-storage-and-concurrency.md), 인증·권한은 [ADR-0004](./adr/0004-authentication-authorization.md), CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다. 제안 상태의 ADR은 채택된 결정이 아니다.
+착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 정리되어 있다. 프런트엔드·서버·CLI 기술 구성을 다룬 [ADR-0001](./adr/0001-tech-stack.md)은 2026-10-08에 채택되었다. 폐쇄망 배포 형태는 [ADR-0002](./adr/0002-deployment-packaging.md), 저장소와 동시 수정은 [ADR-0003](./adr/0003-storage-and-concurrency.md), 인증·권한은 [ADR-0004](./adr/0004-authentication-authorization.md), CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다루며 모두 제안 상태다. 제안 상태의 ADR은 채택된 결정이 아니다.
 
 ## 14. 참고 자료
 
-아래 링크는 앞선 검토에 사용한 공식 문서와 프로젝트 저장소다. 2026-10-07 재확인에서 추가한 출처도 함께 둔다. 기능과 라이선스는 실제 채택할 릴리스 기준으로 다시 확인한다.
+아래 링크는 앞선 검토에 사용한 공식 문서와 프로젝트 저장소다. 2026-10-07 재확인과 2026-10-08 ADR-0001 반영 때 추가한 출처도 함께 둔다. 기능과 라이선스는 실제 채택할 릴리스 기준으로 다시 확인한다.
 
 ### GUI 및 그래프
 
-- [Svelte Flow][svelte-flow]
+- [React Flow][react-flow]
+- [@xyflow/react npm 메타데이터 — 최신 안정판·게시일·라이선스 확인][xyflow-react-npm]
+- [@xyflow/react 최신판 메타데이터 — peer·런타임 의존성 확인][xyflow-react-npm-latest]
+- [react npm 메타데이터 — 최신 안정판 확인][react-npm]
+- [React Flow 하위 흐름(sub flows) — `parentId`·`extent: 'parent'`·노드 순서 확인][react-subflows]
+- [xyflow 저장소][xyflow]
+- [React Flow Pro — 코어 MIT·요금제·FAQ 확인][react-pro]
+- [xyflow Pro License — Pro 예제 사용·재배포 조건 확인][xyflow-pro-license]
+- [React Flow 예제 목록 — 그룹 예제의 Pro 여부 확인][rf-examples]
+- [React Flow Pro 예제 목록 — 레이아웃 예제의 Pro 여부 확인][rf-pro-examples]
+- [React Flow Expand and Collapse 예제 — Pro 전용 확인][rf-expand-collapse]
+- [React Flow 레이아웃 안내][flow-layout]
+- [React Flow Dagre 예제 — 무료 공개 확인][rf-dagre]
+- [React Flow 순환 방지 예제 — 무료 공개 확인][prevent-cycles]
+- [Vite npm 메타데이터 — 최신 안정판·Node 요구 범위 확인][vite-npm]
+- [Svelte Flow — 검토했으나 채택하지 않음][svelte-flow]
 - [Svelte Flow 사용자 정의 노드][svelte-custom]
 - [Svelte Flow 하위 흐름(sub flows) — `parentId`·`extent: 'parent'` 확인][svelte-subflows]
-- [React Flow][react-flow]
-- [xyflow 저장소][xyflow]
-- [React Flow Pro][react-pro]
-- [React Flow 레이아웃 안내][flow-layout]
-- [React Flow 순환 방지 예제][prevent-cycles]
 - [AntV X6 저장소][x6]
 - [X6 History 플러그인][x6-history]
 - [X6 Cell API — 상위·하위 노드 관계 확인][x6-cell-api]
@@ -500,10 +587,20 @@ Confluence: 초기에는 공정에 URL만 저장하고 브라우저에서 페이
 [svelte-custom]: https://svelteflow.dev/learn/customization/custom-nodes
 [svelte-subflows]: https://svelteflow.dev/learn/layouting/sub-flows
 [react-flow]: https://reactflow.dev/
+[xyflow-react-npm]: https://registry.npmjs.org/@xyflow/react
+[xyflow-react-npm-latest]: https://registry.npmjs.org/@xyflow/react/latest
+[react-npm]: https://registry.npmjs.org/react
+[react-subflows]: https://reactflow.dev/learn/layouting/sub-flows
 [xyflow]: https://github.com/xyflow/xyflow
 [react-pro]: https://reactflow.dev/pro
+[xyflow-pro-license]: https://xyflow.com/pro-license
+[rf-examples]: https://reactflow.dev/examples
+[rf-pro-examples]: https://reactflow.dev/pro/examples
+[rf-expand-collapse]: https://reactflow.dev/examples/layout/expand-collapse
 [flow-layout]: https://reactflow.dev/learn/layouting/layouting
+[rf-dagre]: https://reactflow.dev/examples/layout/dagre
 [prevent-cycles]: https://reactflow.dev/examples/interaction/prevent-cycles
+[vite-npm]: https://registry.npmjs.org/vite
 [x6]: https://github.com/antvis/X6
 [x6-history]: https://x6.antv.antgroup.com/tutorial/plugins/history
 [x6-cell-api]: https://x6.antv.antgroup.com/en/api/model/cell
