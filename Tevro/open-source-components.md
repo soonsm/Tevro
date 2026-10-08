@@ -1,12 +1,13 @@
 # Tevro — 활용 가능한 오픈소스와 구현 경계
 
-- 문서 상태: 기술 검토 및 추천안. 이 문서 자체는 기술 스택 채택이나 구현 완료를 의미하지 않음. 채택된 결정은 ADR에 기록하며, 현재 채택 상태인 것은 ADR-0001, ADR-0002, ADR-0003, ADR-0004다.
+- 문서 상태: 기술 검토 및 추천안. 이 문서 자체는 기술 스택 채택이나 구현 완료를 의미하지 않음. 채택된 결정은 ADR에 기록하며, ADR-0001~ADR-0007은 모두 채택 상태다(2026-10-08).
 - 작성 기준일: 2026-09-26
 - 개정일: 2026-10-07 — 외부 정보 재확인 결과 반영, 공정 계층 요구 반영
 - 개정일: 2026-10-08 — ADR-0001 채택(TypeScript 단일, React SPA, Node 26) 반영
 - 개정일: 2026-10-08 — ADR-0002 채택(Node.js 동봉 압축 파일 + systemd) 반영
 - 개정일: 2026-10-08 — ADR-0003 채택(SQLite + better-sqlite3) 반영
 - 개정일: 2026-10-08 — ADR-0004 채택(로컬 계정 + 개인 액세스 토큰, 세 역할) 반영
+- 개정일: 2026-10-08 — ADR-0005·0006·0007 채택(타입 접두사 + ULID, REST + OpenAPI + 변경 묶음, CLI 최소 계약·내부 npm 패키지·Commander.js 15.x) 반영
 - 관련 문서: [해결하려는 문제와 제품 요구사항](./product-requirements.md), [착수 전 결정 기록(ADR)](./adr/README.md)
 - 목적: 공정 GUI 편집, DAG 배치·검증, Jira·Confluence 연동, CLI 구현에 활용할 기존 오픈소스를 정리하고 Tevro가 직접 구현할 부분을 구분한다.
 - 근거 범위: 앞선 검토에서 확인한 공식 문서·공개 저장소를 정리한 문서다. 사내 Jira 및 폐쇄망에서 설치·동작을 검증한 결과는 아니다. 실제 채택 시 릴리스별 기능·라이선스·유지보수 상태를 다시 확인한다. 2026-10-07에 버전·지원 기간·엔드포인트 등 공개 정보를 다시 확인해 반영했다. 이 재확인도 공개 자료 대조이며, 사내 설치·동작 검증은 여전히 아니다. 2026-10-08에는 ADR-0001 채택에 맞춰 React Flow·React·Vite의 공개 정보(npm 메타데이터, 공식 문서·예제 페이지, Pro 라이선스)를 확인해 반영했다. 같은 날 ADR-0003 채택에 맞춰 better-sqlite3의 공개 정보(npm 메타데이터와 패키지 압축 파일 내용, README, 공식 문서)도 확인해 반영했다. ADR-0004 채택에 맞춰서는 Node.js crypto 문서에서 `crypto.argon2`·`crypto.argon2Sync`의 추가 버전과 실험적 표시 여부를 확인했다. 이것도 공개 자료 대조다.
@@ -15,7 +16,7 @@
 
 ## 1. 추천 조합 요약
 
-[ADR-0001](./adr/0001-tech-stack.md)에서 TypeScript 단일 언어와 React를 채택했다(2026-10-08). 서버·웹·CLI를 모두 TypeScript로 작성하고(Node.js 서버 + React SPA + Node.js CLI), Node.js 주 버전은 26 LTS다. 아래 표는 이 결정에 맞춘 조합이다. ADR-0001과 ADR-0003에서 정한 항목은 '채택'으로 표시하고, 나머지는 후보로 남긴다.
+[ADR-0001](./adr/0001-tech-stack.md)에서 TypeScript 단일 언어와 React를 채택했다(2026-10-08). 서버·웹·CLI를 모두 TypeScript로 작성하고(Node.js 서버 + React SPA + Node.js CLI), Node.js 주 버전은 26 LTS다. 아래 표는 이 결정에 맞춘 조합이다. ADR-0001·ADR-0003·ADR-0007에서 정한 항목은 '채택'으로 표시하고, 나머지는 후보로 남긴다.
 
 | 역할 | 채택·후보 | 판단 |
 | --- | --- | --- |
@@ -28,7 +29,7 @@
 | Jira API 접근 | 서버 JiraAdapter 뒤의 작은 REST 어댑터 — 채택(ADR-0001) | Jira 9.x 대상인 동안 REST 어댑터로 구현(§6.3). 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상을 재평가(§6.1). SDK 때문에 서버 언어를 바꾸지 않음 |
 | Confluence | 초기에는 URL 저장·표시 | 현재 요구에는 SDK나 페이지 본문 수집이 필요하지 않음 |
 | 영속 저장소 | SQLite + `better-sqlite3` — 채택(ADR-0003) | 서버만 접근한다. 모든 쓰기 트랜잭션을 `BEGIN IMMEDIATE`로 열어 하나씩 처리한다. 동기식 API다(§9) |
-| CLI 명령 해석 | Commander.js (`commander`) — 채택(ADR-0001) | 명령·옵션·도움말 처리를 재사용하고 Tevro API 호출은 직접 구현. CLI는 Node.js + TypeScript(ADR-0001). 주 버전(14.x 또는 15.x)과 배포 형태는 ADR-0007에서 정함 |
+| CLI 명령 해석 | Commander.js (`commander`) 15.x — 채택(ADR-0001, 주 버전은 ADR-0007) | 명령·옵션·도움말 처리를 재사용하고 Tevro API 호출은 직접 구현. CLI는 Node.js + TypeScript(ADR-0001). 내부 npm 패키지로 배포(ADR-0007, §8.1) |
 | 문서용 그래프 출력 | Mermaid | 주 GUI 편집기 대신 후속 내보내기 기능의 후보 |
 
 이 추천은 해당 라이브러리만 조합하면 제품 전체가 완성된다는 뜻이 아니다. 공정 데이터, 상태, 템플릿, 인증·권한, 저장, 외부 연동의 실패 복구는 Tevro의 구현 범위로 남는다. 각 후보의 기능 근거는 아래 절과 참고 자료에 정리한다.
@@ -391,10 +392,10 @@ Jira 이슈에 외부 페이지 링크를 달아주는 경우에는 Jira Remote 
 
 | 주 버전 | 조건 |
 | --- | --- |
-| 15.x (15.0.0, 2026-05-29) | ESM 전용. Node.js 22.12.0 이상 필요 |
+| 15.x (15.0.0, 2026-05-29) — 채택(ADR-0007) | ESM 전용. Node.js 22.12.0 이상 필요 |
 | 14.x | 2027-05까지 보안 업데이트 제공 |
 
-현재 지원되는 Node.js LTS 계열(22.12.0 이상의 22, 24)은 15.x의 조건을 충족한다. ADR-0001에서 채택한 Node.js 26(2026-10-28 LTS 전환 예정, 2029-04-30 EOL)도 이 조건을 충족한다. 20 계열은 2026-04-30에 지원이 끝났다. [Node.js 릴리스 일정][node-release] 따라서 이 변경이 Commander.js 채택(ADR-0001)을 바꾸지는 않는다. 영향은 CLI를 실행할 호스트의 Node.js 버전과 CLI 배포 형태(Node 패키지 또는 런타임을 포함한 단일 실행 파일) 결정 수준이며, 이 결정은 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다. Commander.js의 채택 주 버전(14.x 또는 15.x)은 아직 정하지 않았고, ADR-0007에서 정한다.
+현재 지원되는 Node.js LTS 계열(22.12.0 이상의 22, 24)은 15.x의 조건을 충족한다. ADR-0001에서 채택한 Node.js 26(2026-10-28 LTS 전환 예정, 2029-04-30 EOL)도 이 조건을 충족한다. 20 계열은 2026-04-30에 지원이 끝났다. [Node.js 릴리스 일정][node-release] 따라서 이 변경이 Commander.js 채택(ADR-0001)을 바꾸지는 않는다. 영향은 CLI를 실행할 호스트의 Node.js 버전과 CLI 배포 형태(Node 패키지 또는 런타임을 포함한 단일 실행 파일) 결정 수준이었다. [ADR-0007](./adr/0007-cli-contract.md)에서 Commander.js 15.x를 채택하고, CLI는 내부 npm 패키지로 배포하기로 했다(선택지 A, 2026-10-08). 따라서 CLI를 실행할 호스트에 Node.js 22.12.0 이상이 있어야 한다. 에이전트 실행 환경에 Node.js가 없다고 확인되면 단일 실행 파일(선택지 B)을 재검토한다.
 
 ```sh
 # 문법 예시이며 최종 CLI 계약이나 실행 가능한 구현을 의미하지 않음
@@ -409,13 +410,13 @@ tevro jira publish --project <project-id> --dry-run --json
 
 GUI와 CLI는 같은 서버 API를 사용한다. CLI가 DB를 직접 변경하거나 별도 로컬 상태를 원본으로 갖지 않게 한다.
 
-AI 에이전트가 사용하는 명령에는 안정적인 ID, 비대화형 실행, 기계가 해석할 수 있는 출력, 예측 가능한 오류 코드, 변경 대상 확인이 필요하다. 라이브러리는 이 중 명령 해석 기반을 제공하며, 나머지는 제품의 인터페이스 계약으로 정의한다.
+AI 에이전트가 사용하는 명령에는 안정적인 ID, 비대화형 실행, 기계가 해석할 수 있는 출력, 예측 가능한 오류 코드, 변경 대상 확인이 필요하다. 라이브러리는 이 중 명령 해석 기반을 제공하며, 나머지는 제품의 인터페이스 계약으로 정의한다. CLI 최소 계약(명사-동사 문법, `--json` 출력, 종료 코드 표, 비대화형 실행과 `--yes`·`--dry-run`, 서버 주소·토큰·CA 우선순위, CLI-서버 버전 호환)은 [ADR-0007](./adr/0007-cli-contract.md)에서 정했다(2026-10-08 채택).
 
 Jira 일괄 생성처럼 외부 데이터를 만드는 명령에는 미리 보기와 실행을 구분한다. 내부에 LLM 서비스나 에이전트 런타임을 탑재할 필요는 없다.
 
 ## 9. 권장 연결 구조와 데이터 경계
 
-아래 구조는 역할 분리를 설명하는 제안이다. 서버·웹·CLI는 TypeScript(Node.js 26)로, 웹은 React SPA 정적 빌드로 정했다(ADR-0001). HTTP 프레임워크([ADR-0006](./adr/0006-server-api-contract.md))는 미정이다. 저장소는 SQLite, Node.js 드라이버는 `better-sqlite3`로 정했다([ADR-0003](./adr/0003-storage-and-concurrency.md)). 배포는 Node.js 런타임 동봉 압축 파일 + systemd 단일 프로세스로 정했다([ADR-0002](./adr/0002-deployment-packaging.md)). 인증은 Tevro 로컬 계정 + 개인 액세스 토큰으로, 권한은 인스턴스 단위 세 역할(열람자·편집자·관리자)로 정했다([ADR-0004](./adr/0004-authentication-authorization.md)).
+아래 구조는 역할 분리를 설명하는 제안이다. 서버·웹·CLI는 TypeScript(Node.js 26)로, 웹은 React SPA 정적 빌드로 정했다(ADR-0001). 서버 API는 REST + OpenAPI 단일 스키마와 변경 묶음으로 정했고, HTTP 프레임워크와 OpenAPI 작성 방식은 스파이크에서 정한다([ADR-0006](./adr/0006-server-api-contract.md), 2026-10-08 채택). 식별자는 타입 접두사 + ULID다([ADR-0005](./adr/0005-identifiers-and-deletion.md)). 저장소는 SQLite, Node.js 드라이버는 `better-sqlite3`로 정했다([ADR-0003](./adr/0003-storage-and-concurrency.md)). 배포는 Node.js 런타임 동봉 압축 파일 + systemd 단일 프로세스로 정했다([ADR-0002](./adr/0002-deployment-packaging.md)). 인증은 Tevro 로컬 계정 + 개인 액세스 토큰으로, 권한은 인스턴스 단위 세 역할(열람자·편집자·관리자)로 정했다([ADR-0004](./adr/0004-authentication-authorization.md)).
 
 ```text
 브라우저 GUI (React SPA, 서버가 정적 파일 제공)
@@ -505,7 +506,7 @@ Tevro에 적용할 때의 설계 판단은 다음과 같다.
 
 - JavaScript·CSS·폰트·아이콘 등 실행 자산을 배포물에 포함하고 외부 CDN을 필수로 사용하지 않는다.
 - 선택한 버전과 의존성을 고정하고, 내부 패키지 저장소 또는 반입 절차로 재현 가능한 설치 경로를 마련한다.
-- CLI를 실행할 호스트(개발자 PC, AI 에이전트 실행 환경)의 Node.js 버전이 채택한 CLI 의존성의 요구 조건(예: Commander.js 15.x의 Node.js 22.12.0 이상)을 충족하는지 확인한다. 충족하지 않으면 런타임을 포함한 단일 실행 파일 번들을 검토한다. 결정은 [ADR-0007](./adr/0007-cli-contract.md)에서 다룬다.
+- CLI를 실행할 호스트(개발자 PC, AI 에이전트 실행 환경)의 Node.js 버전이 채택한 CLI 의존성의 요구 조건(Commander.js 15.x의 Node.js 22.12.0 이상)을 충족하는지 확인한다. CLI는 내부 npm 패키지로 배포하므로 호스트에 Node.js가 있어야 한다([ADR-0007](./adr/0007-cli-contract.md), 2026-10-08 채택). 에이전트 실행 환경에 Node.js가 없다고 확인되면 런타임을 포함한 단일 실행 파일 번들(ADR-0007 선택지 B)을 재검토한다.
 - `better-sqlite3`의 미리 빌드된 바이너리(`prebuilds/`)가 대상 서버의 OS·아키텍처를 포함하는지 확인한다. 2026-10-08에 확인한 목록은 §9에 있다. 목록에 없으면 설치 전에 대응 방법을 정한다. [better-sqlite3 README][better-sqlite3]
 - ELK.js Worker를 사용한다면 Worker 스크립트도 내부 배포 경로에서 제공한다. [ELK.js][elk]
 - 외부 인증, 외부 라이선스 확인, 원격 텔레메트리 등의 실행 의존성이 있는지는 실제 배포 조합에서 점검한다.
@@ -538,18 +539,19 @@ Tevro에 적용할 때의 설계 판단은 다음과 같다.
 | GUI·CLI 일치 | 같은 공정 ID와 저장 결과를 양쪽에서 확인 | F-C01, F-C04, F-C08 |
 | 폐쇄망 | 외부 인터넷 없이 기본 기능이 동작 | N-01~N-03 |
 | Node.js 26 도구 호환성 | React·React Flow 웹 빌드(Vite 등)와 서버·CLI 실행이 Node.js 26에서 동작 | ADR-0001 |
+| HTTP 프레임워크·OpenAPI 작성 방식 | 서버 HTTP 프레임워크와 OpenAPI 작성 방식(스키마 우선 또는 코드에서 생성)을 정함 | ADR-0006 |
 
 위 F·N·AC ID는 [제품 요구사항](./product-requirements.md)의 항목이다. 시험용 Jira 이슈 생성도 외부 데이터 변경이므로 명시적으로 정한 시험 대상과 권한 범위에서 수행한다. 이 문서는 그 실행을 완료했다고 주장하지 않는다.
 
 ## 13. 현재 결론과 미결정 사항
 
-**우선 검증할 조합은 React Flow + Dagre + Commander.js다.** React Flow는 [ADR-0001](./adr/0001-tech-stack.md)에서 채택한 React 프런트엔드의 그래프 라이브러리다. Commander.js도 ADR-0001에서 CLI 명령 해석 라이브러리로 채택했고, 주 버전은 ADR-0007에서 정한다. Dagre는 채택한 TypeScript 단일 언어 구성에서 쓸 후보이며, 고정 버전과 함께 스파이크로 확인한다. 앞선 검토의 1차 조합은 Svelte Flow + Dagre + Commander.js였고, 프런트엔드가 React로 정해지면 React Flow로 대체한다고 적었다. ADR-0001에서 React를 채택해 그래프 라이브러리만 React Flow로 바뀌었고 Svelte Flow는 채택하지 않았다(§3.1). Graphlib 도입 여부는 작은 자체 함수와 비교해 정한다. 계층 요구로 그래프 편집기는 하위 흐름(중첩 노드) 지원이 필수 확인 항목이 되었다. React Flow의 하위 흐름은 공식 문서로 확인했고(§3.2), 접기·펼치기와 층별 배치는 Tevro가 구현한다(§4.1). 공식 접기·펼치기 예제는 Pro 전용이므로 코어(MIT)만으로 구현하는 것을 제안한다(§3.2).
+**우선 검증할 조합은 React Flow + Dagre + Commander.js다.** React Flow는 [ADR-0001](./adr/0001-tech-stack.md)에서 채택한 React 프런트엔드의 그래프 라이브러리다. Commander.js도 ADR-0001에서 CLI 명령 해석 라이브러리로 채택했고, 주 버전은 ADR-0007에서 15.x로 정했다. Dagre는 채택한 TypeScript 단일 언어 구성에서 쓸 후보이며, 고정 버전과 함께 스파이크로 확인한다. 앞선 검토의 1차 조합은 Svelte Flow + Dagre + Commander.js였고, 프런트엔드가 React로 정해지면 React Flow로 대체한다고 적었다. ADR-0001에서 React를 채택해 그래프 라이브러리만 React Flow로 바뀌었고 Svelte Flow는 채택하지 않았다(§3.1). Graphlib 도입 여부는 작은 자체 함수와 비교해 정한다. 계층 요구로 그래프 편집기는 하위 흐름(중첩 노드) 지원이 필수 확인 항목이 되었다. React Flow의 하위 흐름은 공식 문서로 확인했고(§3.2), 접기·펼치기와 층별 배치는 Tevro가 구현한다(§4.1). 공식 접기·펼치기 예제는 Pro 전용이므로 코어(MIT)만으로 구현하는 것을 제안한다(§3.2).
 
 **Jira는 TypeScript 서버의 JiraAdapter 경계 뒤에 작은 REST 어댑터로 연동한다(ADR-0001 채택).** 대상이 Jira 9.x인 동안 이 방식을 쓰고, 사내 Jira가 10.0 이상이 되면 `jira.js` 6.3 이상 정식판을 재평가한다(§6.1, §6.3). 실제 사내 설정에서의 동작은 먼저 확인한다. Confluence는 현재 요구대로 링크 저장부터 시작한다.
 
-서버 언어(TypeScript 단일), 프런트엔드 프레임워크(React), 웹 빌드 방식(SPA 정적 빌드), Node.js 주 버전(26 LTS), CLI 구성(Node.js + TypeScript + Commander.js), Jira 연동 방식(작은 REST 어댑터)은 ADR-0001에서 결정했다. 저장소(SQLite)와 Node.js 드라이버(`better-sqlite3`)는 ADR-0003에서 결정했다(§9). 인증 방식(Tevro 로컬 계정 + 개인 액세스 토큰)과 권한 모델(인스턴스 단위 세 역할)은 ADR-0004에서 결정했다(§9). 아직 결정하지 않은 사항은 HTTP 프레임워크(ADR-0006), CLI 배포 형태와 Commander.js 주 버전(ADR-0007), Graphlib 도입 여부, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira 상태 매핑, CLI의 최종 문법과 출력 계약이다. 이 문서는 후보 비교와 구현 경계를 제시한다. 기존 제품 요구사항의 기능 범위를 임의로 확대하지 않으며, 기술 선택은 ADR에서 확정한다.
+서버 언어(TypeScript 단일), 프런트엔드 프레임워크(React), 웹 빌드 방식(SPA 정적 빌드), Node.js 주 버전(26 LTS), CLI 구성(Node.js + TypeScript + Commander.js), Jira 연동 방식(작은 REST 어댑터)은 ADR-0001에서 결정했다. 저장소(SQLite)와 Node.js 드라이버(`better-sqlite3`)는 ADR-0003에서 결정했다(§9). 인증 방식(Tevro 로컬 계정 + 개인 액세스 토큰)과 권한 모델(인스턴스 단위 세 역할)은 ADR-0004에서 결정했다(§9). 식별자(타입 접두사 + ULID)와 삭제 방식(영향 미리 보기 후 물리 삭제)은 ADR-0005, 서버 API 형태(REST + OpenAPI 단일 스키마 + 변경 묶음)와 오류 형식(RFC 9457)은 ADR-0006, CLI 최소 계약(문법, `--json` 출력, 종료 코드 등)과 배포 형태(내부 npm 패키지), Commander.js 주 버전(15.x)은 ADR-0007에서 결정했다. 아직 결정하지 않은 사항은 HTTP 프레임워크와 OpenAPI 작성 방식(ADR-0006, 스파이크에서 정함), Graphlib 도입 여부, 그래프 라이브러리의 채택 버전, 배치·좌표 저장 정책(층별 좌표와 접힘 상태 포함), Jira 상태 매핑이다. 이 문서는 후보 비교와 구현 경계를 제시한다. 기존 제품 요구사항의 기능 범위를 임의로 확대하지 않으며, 기술 선택은 ADR에서 확정한다.
 
-착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 정리되어 있다. 프런트엔드·서버·CLI 기술 구성을 다룬 [ADR-0001](./adr/0001-tech-stack.md)은 2026-10-08에 채택되었다. 폐쇄망 배포 형태를 다룬 [ADR-0002](./adr/0002-deployment-packaging.md)도 같은 날 채택되었다(Node.js 동봉 압축 파일 + systemd). 저장소와 동시 수정을 다룬 [ADR-0003](./adr/0003-storage-and-concurrency.md)도 같은 날 채택되었다(SQLite + better-sqlite3). 인증·권한을 다룬 [ADR-0004](./adr/0004-authentication-authorization.md)도 같은 날 채택되었다(Tevro 로컬 계정 + 개인 액세스 토큰, 세 역할). CLI 계약과 배포 형태는 [ADR-0007](./adr/0007-cli-contract.md)에서 다루며 제안 상태다. 제안 상태의 ADR은 채택된 결정이 아니다.
+착수 전에 필요한 결정은 [착수 전 결정 기록(ADR)](./adr/README.md)에 정리되어 있다. 프런트엔드·서버·CLI 기술 구성을 다룬 [ADR-0001](./adr/0001-tech-stack.md)은 2026-10-08에 채택되었다. 폐쇄망 배포 형태를 다룬 [ADR-0002](./adr/0002-deployment-packaging.md)도 같은 날 채택되었다(Node.js 동봉 압축 파일 + systemd). 저장소와 동시 수정을 다룬 [ADR-0003](./adr/0003-storage-and-concurrency.md)도 같은 날 채택되었다(SQLite + better-sqlite3). 인증·권한을 다룬 [ADR-0004](./adr/0004-authentication-authorization.md)도 같은 날 채택되었다(Tevro 로컬 계정 + 개인 액세스 토큰, 세 역할). 식별자·삭제를 다룬 [ADR-0005](./adr/0005-identifiers-and-deletion.md), 서버 API 계약을 다룬 [ADR-0006](./adr/0006-server-api-contract.md), CLI 계약과 배포 형태를 다룬 [ADR-0007](./adr/0007-cli-contract.md)도 같은 날 채택되었다. 이로써 ADR-0001~ADR-0007이 모두 채택되었다. 남은 확인 사항은 각 ADR에 있다.
 
 ## 14. 참고 자료
 
