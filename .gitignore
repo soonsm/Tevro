@@ -5,3 +5,10 @@
 **/.obsidian/workspace.json
 **/.obsidian/workspace-mobile.json
 .trash/
+
+# Node.js
+node_modules/
+dist/
+
+# 로컬 실행 데이터(SQLite)
+data/
