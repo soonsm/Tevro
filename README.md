@@ -96,3 +96,4 @@ npm run typecheck  # TypeScript 검사
 | `scripts` | `demo`(예시 데이터), `dev`(개발 서버) |
 | `test` | `node:test` 테스트 |
 | `Tevro/` | 요구사항·결정 기록 문서(Obsidian) |
+| `Tevro/db-schema.md` | 테이블 설계서(ERD, 컬럼 설명, 제약) |

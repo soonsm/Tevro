@@ -21,6 +21,7 @@ export type Store = ReturnType<typeof createStore>;
 type Input = Record<string, unknown>;
 
 // 순환은 DB 제약으로 막을 수 없어 서버가 쓰기 트랜잭션 안에서 검사하고, 나머지는 DB 제약으로 한 번 더 막는다(ADR-0003).
+// 테이블·컬럼 설명은 Tevro/db-schema.md에 있다. 스키마를 바꾸면 그 문서도 함께 고친다.
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
