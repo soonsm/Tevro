@@ -7,6 +7,9 @@ const TITLES: Record<ErrorCode, string> = {
   VALIDATION_CYCLE: '순환 연결',
   REFERENCE_NOT_FOUND: '참조한 공정 없음',
   CROSS_PROJECT_REFERENCE: '다른 프로젝트의 공정',
+  HIERARCHY_CYCLE: '계층 고리',
+  CROSS_LEVEL_DEPENDENCY: '다른 층 공정 연결',
+  HAS_DEPENDENCIES: '연결이 남은 공정 이동',
   NOT_FOUND: '대상 없음',
   INTERNAL: '서버 오류',
 };

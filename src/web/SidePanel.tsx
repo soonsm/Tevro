@@ -1,36 +1,85 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
-import { STATUS_LABELS, TASK_STATUSES, isHttpUrl, type Edge, type TaskStatus } from '../shared/domain.ts';
+import {
+  INCONSISTENCY_LABELS,
+  STATUS_LABELS,
+  TASK_STATUSES,
+  ancestorIds,
+  hasPrerequisites,
+  isHttpUrl,
+  type Edge,
+  type TaskStatus,
+} from '../shared/domain.ts';
 import type { GraphDto, TaskDto, TaskInput } from '../shared/types.ts';
-import { ArrowDownIcon, CheckIcon, CopyIcon, ExternalIcon, PencilIcon, PlusIcon, StatusChip, StatusIcon, WarnIcon } from './icons.tsx';
+import {
+  ArrowDownIcon,
+  CheckIcon,
+  CopyIcon,
+  ExternalIcon,
+  PencilIcon,
+  PlusIcon,
+  StatusChip,
+  StatusIcon,
+  WarnIcon,
+} from './icons.tsx';
 import type { Selection } from './App.tsx';
 
 interface Props {
   graph: GraphDto;
   selection: Selection;
-  onSelect: (selection: Selection) => void;
+  /** 보고 있는 층의 상위 공정. null이면 최상위 층 */
+  levelId: string | null;
+  /** 공정이 있는 층으로 가서 그 공정을 고른다 */
+  onFocusTask: (taskId: string) => void;
+  /** 공정 안(하위 층)으로 들어간다 */
+  onOpenLevel: (taskId: string) => void;
+  /** 공정 안으로 들어가 하위 공정 입력란에 커서를 둔다 */
+  onAddChild: (taskId: string) => void;
   onUpdateTask: (taskId: string, input: TaskInput) => void;
+  onMoveTask: (task: TaskDto) => void;
   onDeleteTask: (task: TaskDto) => void;
   onDeleteEdge: (edge: Edge) => void;
 }
 
-export function SidePanel({ graph, selection, onSelect, onUpdateTask, onDeleteTask, onDeleteEdge }: Props) {
+export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdateTask, onMoveTask, onDeleteTask, onDeleteEdge }: Props) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
-  let content = <Overview graph={graph} onSelect={onSelect} />;
+  let content = <Overview graph={graph} onFocusTask={onFocusTask} />;
   if (selection?.kind === 'task' && byId.has(selection.id)) {
     const task = byId.get(selection.id)!;
     content = (
-      <TaskDetail key={task.id} task={task} byId={byId} onSelect={onSelect} onUpdate={onUpdateTask} onDelete={onDeleteTask} />
+      <TaskDetail
+        key={task.id}
+        task={task}
+        graph={graph}
+        byId={byId}
+        levelId={levelId}
+        onFocusTask={onFocusTask}
+        onOpenLevel={onOpenLevel}
+        onAddChild={onAddChild}
+        onUpdate={onUpdateTask}
+        onMove={onMoveTask}
+        onDelete={onDeleteTask}
+      />
     );
   } else if (selection?.kind === 'edge' && byId.has(selection.from) && byId.has(selection.to)) {
     content = (
-      <EdgeDetail from={byId.get(selection.from)!} to={byId.get(selection.to)!} onSelect={onSelect} onDelete={onDeleteEdge} />
+      <EdgeDetail from={byId.get(selection.from)!} to={byId.get(selection.to)!} onFocusTask={onFocusTask} onDelete={onDeleteEdge} />
     );
   }
   return <aside className="panel">{content}</aside>;
 }
 
-function Overview({ graph, onSelect }: { graph: GraphDto; onSelect: Props['onSelect'] }) {
-  const remaining = graph.tasks.filter((task) => task.status !== 'done');
+/** 최상위부터 taskId 바로 위까지의 제목 경로. 최상위 공정이면 빈 문자열 */
+function parentPath(tasks: TaskDto[], byId: Map<string, TaskDto>, taskId: string): string {
+  return ancestorIds(tasks, taskId)
+    .reverse()
+    .map((id) => byId.get(id)?.title)
+    .join(' › ');
+}
+
+function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props['onFocusTask'] }) {
+  const byId = new Map(graph.tasks.map((task) => [task.id, task]));
+  // 상태 요약과 같이 말단 공정 기준으로 본다(F-H09). 상위 공정의 상태는 하위로 드러난다.
+  const remaining = graph.tasks.filter((task) => task.childCount === 0 && task.status !== 'done');
   const groups: { status: TaskStatus; tasks: TaskDto[] }[] = [
     { status: 'in-progress', tasks: remaining.filter((task) => task.status === 'in-progress') },
     { status: 'todo', tasks: remaining.filter((task) => task.status === 'todo') },
@@ -48,15 +97,21 @@ function Overview({ graph, onSelect }: { graph: GraphDto; onSelect: Props['onSel
               <span className="field-label">
                 {STATUS_LABELS[group.status]} {group.tasks.length}
               </span>
-              {group.tasks.map((task) => (
-                <button key={task.id} type="button" className="task-row" onClick={() => onSelect({ kind: 'task', id: task.id })}>
-                  <span className={`task-row__title status-text-${task.status}`}>
-                    <StatusIcon status={task.status} />
-                    <span>{task.title}</span>
-                  </span>
-                  <PrerequisiteBadge task={task} />
-                </button>
-              ))}
+              {group.tasks.map((task) => {
+                const path = parentPath(graph.tasks, byId, task.id);
+                return (
+                  <button key={task.id} type="button" className="task-row" onClick={() => onFocusTask(task.id)}>
+                    <span className="task-row__main">
+                      {path && <span className="task-row__path">{path}</span>}
+                      <span className={`task-row__title status-text-${task.status}`}>
+                        <StatusIcon status={task.status} />
+                        <span>{task.title}</span>
+                      </span>
+                    </span>
+                    <PrerequisiteBadge task={task} />
+                  </button>
+                );
+              })}
             </div>
           ))}
       </section>
@@ -66,6 +121,8 @@ function Overview({ graph, onSelect }: { graph: GraphDto; onSelect: Props['onSel
           <li>공정 추가: 위 입력란에 제목을 쓰고 Enter</li>
           <li>연결: 카드 오른쪽 끝을 끌어 다른 카드에 놓기</li>
           <li>연결 삭제: 연결선을 고르고 Delete</li>
+          <li>하위 공정: 카드의 ‘열기’나 두 번 누르기로 들어가고, 위쪽 경로로 돌아오기</li>
+          <li>하위 공정이 모두 완료되면 상위 공정이 자동으로 완료됩니다</li>
           <li>선행 조건이 갖춰지지 않아도 상태 변경은 막지 않습니다</li>
         </ul>
       </section>
@@ -74,7 +131,7 @@ function Overview({ graph, onSelect }: { graph: GraphDto; onSelect: Props['onSel
 }
 
 function PrerequisiteBadge({ task }: { task: TaskDto }) {
-  if (task.predecessorIds.length === 0) return null;
+  if (!hasPrerequisites(task)) return null;
   return task.prerequisitesMet ? (
     <span className="prerequisite-text is-met">
       <CheckIcon />
@@ -90,19 +147,36 @@ function PrerequisiteBadge({ task }: { task: TaskDto }) {
 
 interface TaskDetailProps {
   task: TaskDto;
+  graph: GraphDto;
   byId: Map<string, TaskDto>;
-  onSelect: Props['onSelect'];
+  levelId: string | null;
+  onFocusTask: Props['onFocusTask'];
+  onOpenLevel: Props['onOpenLevel'];
+  onAddChild: Props['onAddChild'];
   onUpdate: Props['onUpdateTask'];
+  onMove: Props['onMoveTask'];
   onDelete: Props['onDeleteTask'];
 }
 
-function TaskDetail({ task, byId, onSelect, onUpdate, onDelete }: TaskDetailProps) {
+function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete }: TaskDetailProps) {
   const update = (input: TaskInput) => onUpdate(task.id, input);
+  const path = parentPath(graph.tasks, byId, task.id);
+  const children = graph.tasks.filter((item) => item.parentId === task.id).map((item) => item.id);
   return (
     <>
       <div className="panel-section is-tight">
         <TitleField task={task} onSave={(title) => update({ title })} />
         <IdRow id={task.id} />
+      </div>
+
+      <div className="location-row">
+        <span className="field-label">위치</span>
+        <span className="location-row__path" title={path || '최상위'}>
+          {path ? `${path} 아래` : '최상위'}
+        </span>
+        <button type="button" className="button small" onClick={() => onMove(task)}>
+          옮기기
+        </button>
       </div>
 
       <fieldset className="status-field">
@@ -121,12 +195,21 @@ function TaskDetail({ task, byId, onSelect, onUpdate, onDelete }: TaskDetailProp
             </button>
           ))}
         </div>
+        {task.inconsistency && (
+          <div className="warning-box is-compact">
+            <WarnIcon />
+            <p>{INCONSISTENCY_LABELS[task.inconsistency]} 막지는 않으니 필요하면 직접 맞추세요.</p>
+          </div>
+        )}
+        {task.childCount > 0 && !task.inconsistency && (
+          <p className="panel-note is-small">하위 공정이 모두 완료되면 자동으로 완료됩니다. 직접 바꿀 수도 있습니다.</p>
+        )}
       </fieldset>
 
       <section className="panel-section">
         <div className="panel-heading-row">
           <h2 className="panel-heading">선행 조건</h2>
-          {task.predecessorIds.length > 0 &&
+          {hasPrerequisites(task) &&
             (task.prerequisitesMet ? (
               <span className="chip is-met">
                 <CheckIcon />
@@ -139,7 +222,7 @@ function TaskDetail({ task, byId, onSelect, onUpdate, onDelete }: TaskDetailProp
               </span>
             ))}
         </div>
-        {task.predecessorIds.length === 0 ? (
+        {!hasPrerequisites(task) ? (
           <p className="panel-note">선행 공정이 없습니다.</p>
         ) : (
           <>
@@ -148,7 +231,37 @@ function TaskDetail({ task, byId, onSelect, onUpdate, onDelete }: TaskDetailProp
                 완료되지 않은 선행 공정이 {task.unmetPrerequisiteIds.length}개 있습니다. 그래도 상태는 바꿀 수 있습니다.
               </p>
             )}
-            <TaskList ids={task.predecessorIds} byId={byId} onSelect={onSelect} />
+            {task.predecessorIds.length > 0 &&
+              (task.inheritedPredecessors.length > 0 ? (
+                <div className="task-group">
+                  <span className="field-label">직접 선행</span>
+                  <TaskList ids={task.predecessorIds} byId={byId} onFocusTask={onFocusTask} />
+                </div>
+              ) : (
+                <TaskList ids={task.predecessorIds} byId={byId} onFocusTask={onFocusTask} />
+              ))}
+            {task.inheritedPredecessors.length > 0 && (
+              <div className="task-group">
+                <span className="field-label">물려받은 선행</span>
+                <ul className="linked-tasks">
+                  {task.inheritedPredecessors.map(({ taskId, inheritedFrom }) => {
+                    const linked = byId.get(taskId);
+                    if (!linked) return null;
+                    return (
+                      <li key={`${inheritedFrom}>${taskId}`}>
+                        <span className="linked-tasks__main">
+                          <button type="button" className="link-button" onClick={() => onFocusTask(taskId)}>
+                            {linked.title}
+                          </button>
+                          <span className="linked-tasks__note">{byId.get(inheritedFrom)?.title}의 선행</span>
+                        </span>
+                        <StatusChip status={linked.status} />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
           </>
         )}
       </section>
@@ -158,8 +271,35 @@ function TaskDetail({ task, byId, onSelect, onUpdate, onDelete }: TaskDetailProp
         {task.successorIds.length === 0 ? (
           <p className="panel-note">후속 공정이 없습니다.</p>
         ) : (
-          <TaskList ids={task.successorIds} byId={byId} onSelect={onSelect} />
+          <TaskList ids={task.successorIds} byId={byId} onFocusTask={onFocusTask} />
         )}
+      </section>
+
+      <section className="panel-section">
+        <div className="panel-heading-row">
+          <h2 className="panel-heading">하위 공정</h2>
+          {task.childCount > 0 && (
+            <span className="panel-heading-row__aside">
+              {task.doneChildCount}/{task.childCount} 완료
+            </span>
+          )}
+        </div>
+        {children.length === 0 ? (
+          <p className="panel-note">하위 공정이 없습니다.</p>
+        ) : (
+          <TaskList ids={children} byId={byId} onFocusTask={onFocusTask} />
+        )}
+        <div className="button-row">
+          {children.length > 0 && levelId !== task.id && (
+            <button type="button" className="button small" onClick={() => onOpenLevel(task.id)}>
+              하위 공정 열기
+            </button>
+          )}
+          <button type="button" className="button small" onClick={() => onAddChild(task.id)}>
+            <PlusIcon />
+            하위 공정 추가
+          </button>
+        </div>
       </section>
 
       <section className="panel-section">
@@ -190,7 +330,7 @@ function TaskDetail({ task, byId, onSelect, onUpdate, onDelete }: TaskDetailProp
   );
 }
 
-function TaskList({ ids, byId, onSelect }: { ids: string[]; byId: Map<string, TaskDto>; onSelect: Props['onSelect'] }) {
+function TaskList({ ids, byId, onFocusTask }: { ids: string[]; byId: Map<string, TaskDto>; onFocusTask: Props['onFocusTask'] }) {
   return (
     <ul className="linked-tasks">
       {ids.map((id) => {
@@ -198,7 +338,7 @@ function TaskList({ ids, byId, onSelect }: { ids: string[]; byId: Map<string, Ta
         if (!linked) return null;
         return (
           <li key={id}>
-            <button type="button" className="link-button" onClick={() => onSelect({ kind: 'task', id })}>
+            <button type="button" className="link-button" onClick={() => onFocusTask(id)}>
               {linked.title}
             </button>
             <StatusChip status={linked.status} />
@@ -357,12 +497,12 @@ function DescriptionField({ task, onSave }: { task: TaskDto; onSave: (descriptio
   );
 }
 
-function EdgeDetail({ from, to, onSelect, onDelete }: { from: TaskDto; to: TaskDto; onSelect: Props['onSelect']; onDelete: Props['onDeleteEdge'] }) {
+function EdgeDetail({ from, to, onFocusTask, onDelete }: { from: TaskDto; to: TaskDto; onFocusTask: Props['onFocusTask']; onDelete: Props['onDeleteEdge'] }) {
   return (
     <>
       <span className="field-label">선택한 연결</span>
       <div className="edge-cards">
-        <button type="button" className="edge-card" onClick={() => onSelect({ kind: 'task', id: from.id })}>
+        <button type="button" className="edge-card" onClick={() => onFocusTask(from.id)}>
           <span className="field-label">선행</span>
           <span className="edge-card__title">{from.title}</span>
           <StatusChip status={from.status} />
@@ -370,7 +510,7 @@ function EdgeDetail({ from, to, onSelect, onDelete }: { from: TaskDto; to: TaskD
         <span className="edge-cards__arrow">
           <ArrowDownIcon />
         </span>
-        <button type="button" className="edge-card" onClick={() => onSelect({ kind: 'task', id: to.id })}>
+        <button type="button" className="edge-card" onClick={() => onFocusTask(to.id)}>
           <span className="field-label">후속</span>
           <span className="edge-card__title">{to.title}</span>
           <StatusChip status={to.status} />

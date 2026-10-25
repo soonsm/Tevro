@@ -14,10 +14,10 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { reachable, type Edge } from '../shared/domain.ts';
+import { INCONSISTENCY_LABELS, hasPrerequisites, reachable, type Edge } from '../shared/domain.ts';
 import type { GraphDto, TaskDto } from '../shared/types.ts';
-import { CheckIcon, DocIcon, StatusChip, WarnIcon } from './icons.tsx';
-import { layoutPositions } from './layout.ts';
+import { CheckIcon, ChevronRightIcon, DocIcon, StackIcon, StatusChip, WarnIcon } from './icons.tsx';
+import { NODE_HEIGHT, PARENT_NODE_HEIGHT, layoutPositions } from './layout.ts';
 import type { Selection } from './App.tsx';
 
 type TaskNodeType = Node<{ task: TaskDto }, 'task'>;
@@ -50,51 +50,80 @@ interface ViewState {
   related: Set<string>;
   cycle: Set<string>;
   titles: Map<string, string>;
+  open: (taskId: string) => void;
 }
 
-const ViewContext = createContext<ViewState>({ selectedId: null, related: new Set(), cycle: new Set(), titles: new Map() });
+const ViewContext = createContext<ViewState>({
+  selectedId: null,
+  related: new Set(),
+  cycle: new Set(),
+  titles: new Map(),
+  open: () => {},
+});
 
 interface Props {
   graph: GraphDto;
+  /** 보고 있는 층의 상위 공정. null이면 최상위 층. 화면은 한 번에 한 층만 그린다(F-H07). */
+  levelId: string | null;
   selection: Selection;
   /** 순환으로 거부된 경로. 알림을 닫을 때까지 강조한다. */
   cycle: string[] | undefined;
   /** '자동 정렬'을 누를 때마다 바뀌는 값 */
   layoutRequest: number;
   onSelect: (selection: Selection) => void;
+  /** 공정 안(하위 층)으로 들어간다 */
+  onOpen: (taskId: string) => void;
   onConnect: (from: string, to: string) => void;
   onDeleteEdge: (edge: Edge) => void;
 }
 
-export function GraphCanvas({ graph, selection, cycle, layoutRequest, onSelect, onConnect, onDeleteEdge }: Props) {
+export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, onSelect, onOpen, onConnect, onDeleteEdge }: Props) {
   const { fitView } = useReactFlow();
   const [nodes, setNodes] = useState<TaskNodeType[]>([]);
   const layoutKey = useRef('');
-  const selectedTaskId = selection?.kind === 'task' ? selection.id : null;
+
+  // 연결은 같은 층 안에서만 맺으므로 이 층 공정끼리의 연결만 고르면 된다.
+  const level = useMemo(() => {
+    const tasks = graph.tasks.filter((task) => task.parentId === levelId);
+    const ids = new Set(tasks.map((task) => task.id));
+    return { tasks, ids, dependencies: graph.dependencies.filter((edge) => ids.has(edge.from) && ids.has(edge.to)) };
+  }, [graph, levelId]);
+  // 다른 층의 공정(예: 경로에서 고른 상위 공정)을 골랐을 때는 이 층에서 강조할 것이 없다.
+  const selectedTaskId = selection?.kind === 'task' && level.ids.has(selection.id) ? selection.id : null;
 
   const structure = useMemo(
     () =>
-      [graph.project.id, graph.tasks.map((task) => task.id).join(','), graph.dependencies.map((edge) => `${edge.from}>${edge.to}`).join(',')].join('|'),
-    [graph],
+      [
+        graph.project.id,
+        levelId ?? '',
+        level.tasks.map((task) => `${task.id}${task.childCount > 0 ? '+' : ''}`).join(','),
+        level.dependencies.map((edge) => `${edge.from}>${edge.to}`).join(','),
+      ].join('|'),
+    [graph.project.id, levelId, level],
   );
 
-  // 공정이나 연결이 바뀌거나 '자동 정렬'을 누르면 다시 배치한다. 상태·제목만 바뀌면 위치를 그대로 둔다.
+  // 층을 옮기거나, 공정·연결이 바뀌거나, '자동 정렬'을 누르면 다시 배치한다. 상태·제목만 바뀌면 위치를 그대로 둔다.
   // 위치는 저장하지 않으므로 끌어서 옮긴 자리도 다음 배치 때 다시 정렬된다.
   useEffect(() => {
     const key = `${structure}#${layoutRequest}`;
     const relayout = key !== layoutKey.current;
     layoutKey.current = key;
-    const positions = relayout ? layoutPositions(graph.tasks.map((task) => task.id), graph.dependencies) : null;
+    const positions = relayout
+      ? layoutPositions(
+          level.tasks.map((task) => ({ id: task.id, height: task.childCount > 0 ? PARENT_NODE_HEIGHT : NODE_HEIGHT })),
+          level.dependencies,
+        )
+      : null;
     setNodes((previous) => {
       const byId = new Map(previous.map((node) => [node.id, node]));
-      return graph.tasks.map((task): TaskNodeType => {
+      return level.tasks.map((task): TaskNodeType => {
         const old = byId.get(task.id);
         const position = positions?.get(task.id) ?? old?.position ?? { x: 0, y: 0 };
         return old ? { ...old, position, data: { task } } : { id: task.id, type: 'task', position, data: { task } };
       });
     });
     if (relayout) void fitView(FIT_VIEW);
-  }, [graph, structure, layoutRequest, fitView]);
+  }, [level, structure, layoutRequest, fitView]);
 
   // React Flow의 선택 표시를 패널의 선택과 맞춘다(키보드 삭제가 엉뚱한 대상을 잡지 않게).
   useEffect(() => {
@@ -109,19 +138,21 @@ export function GraphCanvas({ graph, selection, cycle, layoutRequest, onSelect, 
   const highlight = useMemo(() => {
     if (!selectedTaskId) return null;
     return {
-      up: reachable(graph.dependencies, selectedTaskId, 'up'),
-      down: reachable(graph.dependencies, selectedTaskId, 'down'),
+      up: reachable(level.dependencies, selectedTaskId, 'up'),
+      down: reachable(level.dependencies, selectedTaskId, 'down'),
     };
-  }, [graph.dependencies, selectedTaskId]);
+  }, [level.dependencies, selectedTaskId]);
 
   const view = useMemo<ViewState>(
     () => ({
       selectedId: selectedTaskId,
       related: new Set([...(highlight?.up ?? []), ...(highlight?.down ?? [])]),
       cycle: new Set(cycle ?? []),
+      // 물려받은 선행은 다른 층에 있으므로 이름은 전체 공정에서 찾는다.
       titles: new Map(graph.tasks.map((task) => [task.id, task.title])),
+      open: onOpen,
     }),
-    [selectedTaskId, highlight, cycle, graph.tasks],
+    [selectedTaskId, highlight, cycle, graph.tasks, onOpen],
   );
 
   const edges = useMemo<FlowEdge[]>(() => {
@@ -132,7 +163,7 @@ export function GraphCanvas({ graph, selection, cycle, layoutRequest, onSelect, 
       const downstream = (id: string) => id === selectedTaskId || highlight.down.has(id);
       return (upstream(edge.from) && upstream(edge.to)) || (downstream(edge.from) && downstream(edge.to));
     };
-    return graph.dependencies.map((edge) => {
+    return level.dependencies.map((edge) => {
       const id = `${edge.from}>${edge.to}`;
       const tone: EdgeTone =
         selection?.kind === 'edge' && selection.from === edge.from && selection.to === edge.to
@@ -157,7 +188,7 @@ export function GraphCanvas({ graph, selection, cycle, layoutRequest, onSelect, 
         interactionWidth: 18,
       };
     });
-  }, [graph.dependencies, highlight, selectedTaskId, selection, cycle]);
+  }, [level.dependencies, highlight, selectedTaskId, selection, cycle]);
 
   return (
     <ViewContext.Provider value={view}>
@@ -167,6 +198,8 @@ export function GraphCanvas({ graph, selection, cycle, layoutRequest, onSelect, 
         nodeTypes={nodeTypes}
         onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))}
         onNodeClick={(_, node) => onSelect({ kind: 'task', id: node.id })}
+        // 하위가 없는 카드는 두 번 눌러도 빈 층으로 들어가지 않는다. 첫 하위는 패널의 '하위 공정 추가'로 만든다.
+        onNodeDoubleClick={(_, node) => node.data.task.childCount > 0 && onOpen(node.id)}
         onEdgeClick={(_, edge) => onSelect({ kind: 'edge', from: edge.source, to: edge.target })}
         onPaneClick={() => onSelect(null)}
         onConnect={({ source, target }) => {
@@ -183,6 +216,7 @@ export function GraphCanvas({ graph, selection, cycle, layoutRequest, onSelect, 
         deleteKeyCode={['Backspace', 'Delete']}
         selectionKeyCode={null}
         multiSelectionKeyCode={null}
+        zoomOnDoubleClick={false}
         fitView
         fitViewOptions={FIT_VIEW}
         minZoom={0.2}
@@ -207,8 +241,9 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
           ? 'related'
           : 'dimmed'
         : 'normal';
+  const parent = task.childCount > 0;
   return (
-    <div className={`task-node is-${emphasis}`} title={task.title}>
+    <div className={`task-node is-${emphasis}${parent ? ' is-parent' : ''}`} title={task.title}>
       <Handle type="target" position={Position.Left} />
       <div className="task-node__top">
         <StatusChip status={task.status} />
@@ -221,6 +256,29 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
       </div>
       <div className="task-node__title">{task.title}</div>
       <PrerequisiteLine task={task} titles={view.titles} />
+      {parent && (
+        <div className="task-node__children">
+          <span
+            className={`task-node__count${task.inconsistency ? ' is-warn' : ''}`}
+            title={task.inconsistency ? INCONSISTENCY_LABELS[task.inconsistency] : `하위 공정 ${task.childCount}개 중 ${task.doneChildCount}개 완료`}
+          >
+            {task.inconsistency ? <WarnIcon /> : <StackIcon />}
+            하위 {task.doneChildCount}/{task.childCount}
+          </span>
+          <button
+            type="button"
+            className="node-open nodrag"
+            aria-label={`${task.title} 하위 공정 열기`}
+            onClick={(event) => {
+              event.stopPropagation();
+              view.open(task.id);
+            }}
+          >
+            열기
+            <ChevronRightIcon />
+          </button>
+        </div>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -228,9 +286,9 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
 
 const nodeTypes = { task: TaskNode };
 
-/** 카드 셋째 줄. 완료 안 된 선행이 1개면 이름, 2개 이상이면 개수만 보여 준다(이름은 패널에). */
+/** 카드 셋째 줄. 완료 안 된 선행(물려받은 것 포함)이 1개면 이름, 2개 이상이면 개수만 보여 준다(이름은 패널에). */
 function PrerequisiteLine({ task, titles }: { task: TaskDto; titles: Map<string, string> }) {
-  if (task.predecessorIds.length === 0) return null;
+  if (!hasPrerequisites(task)) return null;
   if (task.prerequisitesMet) {
     return (
       <div className="task-node__prerequisite is-met">

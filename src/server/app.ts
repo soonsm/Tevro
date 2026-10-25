@@ -67,6 +67,7 @@ export function createApp({ store, webRoot }: { store: Store; webRoot?: string }
     })),
     route('GET', '/api/v1/tasks/:taskId', ({ params }) => ({ body: store.getTask(params.taskId) })),
     route('PATCH', '/api/v1/tasks/:taskId', ({ params, body }) => ({ body: store.updateTask(params.taskId, body) })),
+    route('POST', '/api/v1/tasks/:taskId/move', ({ params, body }) => ({ body: store.moveTask(params.taskId, body) })),
     route('DELETE', '/api/v1/tasks/:taskId', ({ params }) => ({ body: store.deleteTask(params.taskId) })),
   ];
 

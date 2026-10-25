@@ -2,9 +2,11 @@ import type {
   DeleteTaskResult,
   DependencyDto,
   GraphDto,
+  MoveTaskInput,
+  MoveTaskResult,
   Problem,
   ProjectDto,
-  TaskDto,
+  TaskChangeResult,
   TaskInput,
 } from '../shared/types.ts';
 
@@ -44,8 +46,11 @@ export const api = {
   createProject: (name: string) => request<ProjectDto>('POST', '/api/v1/projects', { name }),
   getGraph: (projectId: string) => request<GraphDto>('GET', `/api/v1/projects/${id(projectId)}/graph`),
   createTask: (projectId: string, input: TaskInput) =>
-    request<TaskDto>('POST', `/api/v1/projects/${id(projectId)}/tasks`, input),
-  updateTask: (taskId: string, input: TaskInput) => request<TaskDto>('PATCH', `/api/v1/tasks/${id(taskId)}`, input),
+    request<TaskChangeResult>('POST', `/api/v1/projects/${id(projectId)}/tasks`, input),
+  updateTask: (taskId: string, input: TaskInput) =>
+    request<TaskChangeResult>('PATCH', `/api/v1/tasks/${id(taskId)}`, input),
+  moveTask: (taskId: string, input: MoveTaskInput) =>
+    request<MoveTaskResult>('POST', `/api/v1/tasks/${id(taskId)}/move`, input),
   deleteTask: (taskId: string) => request<DeleteTaskResult>('DELETE', `/api/v1/tasks/${id(taskId)}`),
   addDependency: (projectId: string, from: string, to: string) =>
     request<DependencyDto>('POST', `/api/v1/projects/${id(projectId)}/dependencies`, { from, to }),

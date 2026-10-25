@@ -133,3 +133,31 @@ export function ArrowDownIcon() {
     </svg>
   );
 }
+
+export function InfoIcon() {
+  return (
+    <svg className="icon" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="10" cy="6.2" r="1.1" fill="currentColor" />
+      <path d="M10 9.2 V14.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** 하위 공정을 품은 공정 표시(겹친 카드) */
+export function StackIcon() {
+  return (
+    <svg className="icon" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2">
+      <rect x="1.5" y="4" width="7" height="6.5" rx="1.2" />
+      <path d="M3.5 2 H9.2 A0.8 0.8 0 0 1 10 2.8 V8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon() {
+  return (
+    <svg className="icon" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M4.5 2.5 L8 6 L4.5 9.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

@@ -1,11 +1,42 @@
 #!/usr/bin/env node
 // Tevro CLI. GUI와 같은 서버 API만 호출하고, 로컬에 따로 상태를 두지 않는다(PRD F-C08).
 import { Command, CommanderError, Option } from 'commander';
-import { STATUS_LABELS, TASK_STATUSES, brokenPaths, type Edge } from '../shared/domain.ts';
-import type { DeleteTaskResult, DependencyDto, GraphDto, Problem, ProjectDto, TaskDto } from '../shared/types.ts';
+import {
+  INCONSISTENCY_LABELS,
+  STATUS_LABELS,
+  TASK_STATUSES,
+  TRANSITION_LABELS,
+  ancestorIds,
+  brokenPaths,
+  descendantIds,
+  hasPrerequisites,
+  summarize,
+  treeOrder,
+  type Edge,
+} from '../shared/domain.ts';
+import type {
+  AutoTransition,
+  DeleteTaskResult,
+  DependencyDto,
+  GraphDto,
+  MoveTaskResult,
+  Problem,
+  ProjectDto,
+  TaskChangeResult,
+  TaskDto,
+} from '../shared/types.ts';
 
 // ADR-0007 종료 코드 중 MVP에서 쓰는 것
 const EXIT = { ok: 0, failure: 1, usage: 2, validation: 3, notFound: 6, unreachable: 8 } as const;
+
+// VALIDATION_* 밖에서 종료 코드 3(검증 실패)으로 다루는 구조 검증 오류
+const STRUCTURE_CODES = new Set([
+  'REFERENCE_NOT_FOUND',
+  'CROSS_PROJECT_REFERENCE',
+  'HIERARCHY_CYCLE',
+  'CROSS_LEVEL_DEPENDENCY',
+  'HAS_DEPENDENCIES',
+]);
 
 interface GlobalOptions {
   server?: string;
@@ -80,11 +111,16 @@ const task = program.command('task').description('공정');
 
 task
   .command('list')
-  .description('프로젝트의 공정 목록')
+  .description('프로젝트의 공정 목록 (하위 공정은 들여 씀)')
   .requiredOption('--project <project-id>', '프로젝트 ID')
-  .action(async (options: { project: string }, command: Command) => {
+  .option('--parent <task-id>', '이 공정의 직접 하위 공정만')
+  .addOption(new Option('--top', '최상위 공정만').conflicts('parent'))
+  .action(async (options: { project: string; parent?: string; top?: boolean }, command: Command) => {
     const graph = await client(command).get<GraphDto>(`/api/v1/projects/${segment(options.project)}/graph`);
-    emit(command, graph.tasks, () => (graph.tasks.length === 0 ? '공정이 없습니다.' : taskTable(graph)));
+    if (options.parent) requireTaskIn(graph, options.parent);
+    const tasks =
+      options.parent || options.top ? graph.tasks.filter((item) => item.parentId === (options.parent ?? null)) : graph.tasks;
+    emit(command, tasks, () => (tasks.length === 0 ? '공정이 없습니다.' : taskTable(graph, tasks)));
   });
 
 task
@@ -111,12 +147,15 @@ task
   .addOption(new Option('--status <status>', '실행 상태').choices(TASK_STATUSES))
   .option('--jira-url <url>', 'Jira 이슈 주소')
   .option('--confluence-url <url>', 'Confluence 문서 주소')
-  .action(async (options: TaskOptions & { project: string }, command: Command) => {
-    const created = await client(command).post<TaskDto>(
-      `/api/v1/projects/${segment(options.project)}/tasks`,
-      taskInput(options),
+  .option('--parent <task-id>', '상위 공정 ID (생략하면 최상위)')
+  .action(async (options: TaskOptions & { project: string; parent?: string }, command: Command) => {
+    const result = await client(command).post<TaskChangeResult>(`/api/v1/projects/${segment(options.project)}/tasks`, {
+      ...taskInput(options),
+      parentId: options.parent,
+    });
+    emit(command, result, () =>
+      [`공정을 추가했습니다: ${result.task.title} (${result.task.id})`, ...transitionLines(result.autoTransitions)].join('\n'),
     );
-    emit(command, created, () => `공정을 추가했습니다: ${created.title} (${created.id})`);
   });
 
 task
@@ -132,8 +171,8 @@ task
     if (Object.keys(input).length === 0) {
       throw new CliFailure(EXIT.usage, { code: 'USAGE', detail: '바꿀 값을 하나 이상 지정하세요. (tevro task update --help)' });
     }
-    const updated = await client(command).patch<TaskDto>(`/api/v1/tasks/${segment(taskId)}`, input);
-    emit(command, updated, () => `공정을 고쳤습니다: ${updated.title} (${updated.id})`);
+    const result = await client(command).patch<TaskChangeResult>(`/api/v1/tasks/${segment(taskId)}`, input);
+    emit(command, result, () => `공정을 고쳤습니다: ${result.task.title} (${result.task.id})`);
   });
 
 task
@@ -142,18 +181,80 @@ task
   .argument('<task-id>', '공정 ID')
   .addOption(new Option('--set <status>', '새 실행 상태').choices(TASK_STATUSES).makeOptionMandatory())
   .action(async (taskId: string, options: { set: TaskDto['status'] }, command: Command) => {
-    const updated = await client(command).patch<TaskDto>(`/api/v1/tasks/${segment(taskId)}`, { status: options.set });
-    emit(command, updated, () => {
-      const note = updated.prerequisitesMet
-        ? ''
-        : `\n참고: 선행 조건 미충족 (완료되지 않은 선행 공정 ${updated.unmetPrerequisiteIds.length}개)`;
-      return `상태를 바꿨습니다: ${updated.title} → ${STATUS_LABELS[updated.status]}${note}`;
+    const result = await client(command).patch<TaskChangeResult>(`/api/v1/tasks/${segment(taskId)}`, {
+      status: options.set,
+    });
+    emit(command, result, () => {
+      const updated = result.task;
+      const lines = [`상태를 바꿨습니다: ${updated.title} → ${STATUS_LABELS[updated.status]}`];
+      if (!updated.prerequisitesMet) {
+        lines.push(`참고: 선행 조건 미충족 (완료되지 않은 선행 공정 ${updated.unmetPrerequisiteIds.length}개)`);
+      }
+      if (updated.inconsistency) lines.push(`참고: ${INCONSISTENCY_LABELS[updated.inconsistency]}`);
+      return [...lines, ...transitionLines(result.autoTransitions)].join('\n');
     });
   });
 
 task
+  .command('move')
+  .description('상위 공정 바꾸기 (하위 공정도 함께 옮겨짐). 연결이 있는 공정은 --detach --yes로 연결을 지우고 옮김')
+  .argument('<task-id>', '옮길 공정 ID')
+  .option('--parent <task-id>', '새 상위 공정 ID')
+  .addOption(new Option('--top', '최상위로 옮김').conflicts('parent'))
+  .option('--detach', '이 공정의 연결을 모두 지우고 옮김 (--yes 필요)')
+  .option('--yes', '지워질 연결을 확인했고 이동을 실행합니다')
+  .action(
+    async (
+      taskId: string,
+      options: { parent?: string; top?: boolean; detach?: boolean; yes?: boolean },
+      command: Command,
+    ) => {
+      if (!options.parent && !options.top) {
+        throw new CliFailure(EXIT.usage, { code: 'USAGE', detail: '--parent <task-id>나 --top 중 하나를 지정하세요.' });
+      }
+      const api = client(command);
+      const parentId = options.parent ?? null;
+      const target = await api.get<TaskDto>(`/api/v1/tasks/${segment(taskId)}`);
+      const graph = await api.get<GraphDto>(`/api/v1/projects/${segment(target.projectId)}/graph`);
+      // 연결은 같은 층 안에서만 맺으므로, 다른 층으로 옮기려면 이 공정의 연결을 함께 지워야 한다(F-H08).
+      const attached =
+        options.detach && parentId !== target.parentId
+          ? graph.dependencies.filter((edge) => edge.from === taskId || edge.to === taskId)
+          : [];
+      if (attached.length > 0 && !options.yes) {
+        throw new CliFailure(EXIT.usage, {
+          code: 'CONFIRMATION_REQUIRED',
+          detail: movePreview(target, graph, attached),
+          impact: { removedDependencies: attached },
+        });
+      }
+      let result: MoveTaskResult;
+      try {
+        result = await api.post<MoveTaskResult>(`/api/v1/tasks/${segment(taskId)}/move`, {
+          parentId,
+          removeDependencies: attached,
+        });
+      } catch (error) {
+        if (error instanceof CliFailure && error.body.code === 'HAS_DEPENDENCIES' && !jsonRequested) {
+          error.body.detail += '\n연결을 지우고 옮기려면 --detach --yes를 붙이세요.';
+        }
+        throw error;
+      }
+      emit(command, result, () => {
+        const titles = titleMap(graph);
+        const place = result.task.parentId ? `${titles.get(result.task.parentId) ?? result.task.parentId} 아래` : '최상위';
+        const lines = [`공정을 옮겼습니다: ${result.task.title} → ${place}`];
+        if (result.removedDependencies.length > 0) {
+          lines.push(`함께 지운 연결 ${result.removedDependencies.length}개`, ...result.removedDependencies.map((edge) => edgeLine(edge, titles)));
+        }
+        return [...lines, ...transitionLines(result.autoTransitions)].join('\n');
+      });
+    },
+  );
+
+task
   .command('delete')
-  .description('공정 삭제 (연결도 함께 삭제). --yes가 없으면 영향만 보여 줌')
+  .description('공정 삭제 (하위 공정과 연결도 함께 삭제). --yes가 없으면 영향만 보여 줌')
   .argument('<task-id>', '공정 ID')
   .option('--yes', '영향을 확인했고 삭제를 실행합니다')
   .action(async (taskId: string, options: { yes?: boolean }, command: Command) => {
@@ -161,20 +262,23 @@ task
     if (!options.yes) {
       const target = await api.get<TaskDto>(`/api/v1/tasks/${segment(taskId)}`);
       const graph = await api.get<GraphDto>(`/api/v1/projects/${segment(target.projectId)}/graph`);
-      const removedDependencies = graph.dependencies.filter((edge) => edge.from === taskId || edge.to === taskId);
+      const descendants = descendantIds(graph.tasks, taskId);
+      const removed = new Set([taskId, ...descendants]);
+      const removedDependencies = graph.dependencies.filter((edge) => removed.has(edge.from) || removed.has(edge.to));
       const broken = brokenPaths(graph.dependencies, taskId);
       throw new CliFailure(EXIT.usage, {
         code: 'CONFIRMATION_REQUIRED',
-        detail: deletePreview(target, graph, removedDependencies, broken),
-        impact: { removedDependencies, brokenPaths: broken },
+        detail: deletePreview(target, graph, descendants, removedDependencies, broken),
+        impact: { removedTasks: descendants, removedDependencies, brokenPaths: broken },
       });
     }
     const result = await api.delete<DeleteTaskResult>(`/api/v1/tasks/${segment(taskId)}`);
-    emit(
-      command,
-      result,
-      () => `공정을 삭제했습니다: ${result.deletedTaskId}\n함께 삭제된 연결 ${result.removedDependencies.length}개`,
-    );
+    emit(command, result, () => {
+      const lines = [`공정을 삭제했습니다: ${result.deletedTaskId}`];
+      if (result.removedTasks.length > 0) lines.push(`함께 삭제된 하위 공정 ${result.removedTasks.length}개`);
+      lines.push(`함께 삭제된 연결 ${result.removedDependencies.length}개`, ...transitionLines(result.autoTransitions));
+      return lines.join('\n');
+    });
   });
 
 const dependency = program.command('dependency').alias('dep').description('선후관계(연결)');
@@ -213,11 +317,13 @@ const graph = program.command('graph').description('그래프 전체');
 
 graph
   .command('show')
-  .description('공정·연결·상태를 한 번에 조회')
+  .description('공정·연결·상태를 한 번에 조회 (하위 공정은 들여 씀)')
   .requiredOption('--project <project-id>', '프로젝트 ID')
-  .action(async (options: { project: string }, command: Command) => {
-    const result = await client(command).get<GraphDto>(`/api/v1/projects/${segment(options.project)}/graph`);
-    emit(command, result, () => graphText(result));
+  .option('--root <task-id>', '이 공정 안의 층(직접 하위 공정과 그 사이 연결)만')
+  .action(async (options: { project: string; root?: string }, command: Command) => {
+    const full = await client(command).get<GraphDto>(`/api/v1/projects/${segment(options.project)}/graph`);
+    const result = options.root ? levelOf(full, options.root) : full;
+    emit(command, result, () => graphText(result, full, options.root));
   });
 
 interface TaskOptions {
@@ -320,9 +426,7 @@ function client(command: Command) {
 }
 
 function exitCodeOf(code: string): number {
-  if (code.startsWith('VALIDATION_') || code === 'REFERENCE_NOT_FOUND' || code === 'CROSS_PROJECT_REFERENCE') {
-    return EXIT.validation;
-  }
+  if (code.startsWith('VALIDATION_') || STRUCTURE_CODES.has(code)) return EXIT.validation;
   return code === 'NOT_FOUND' ? EXIT.notFound : EXIT.failure;
 }
 
@@ -343,31 +447,77 @@ function titleMap(graph: GraphDto): Map<string, string> {
   return new Map(graph.tasks.map((item) => [item.id, item.title]));
 }
 
+function requireTaskIn(graph: GraphDto, taskId: string): TaskDto {
+  const found = graph.tasks.find((item) => item.id === taskId);
+  if (!found) throw new CliFailure(EXIT.notFound, { code: 'NOT_FOUND', detail: `이 프로젝트에 그 공정이 없습니다: ${taskId}` });
+  return found;
+}
+
+/** 공정 안의 층(직접 하위 공정과 그 사이 연결). 요약은 그 공정 아래 말단 공정 기준이다. */
+function levelOf(graph: GraphDto, rootId: string): GraphDto {
+  requireTaskIn(graph, rootId);
+  const tasks = graph.tasks.filter((item) => item.parentId === rootId);
+  const ids = new Set(tasks.map((item) => item.id));
+  const subtree = new Set(descendantIds(graph.tasks, rootId));
+  return {
+    project: graph.project,
+    tasks,
+    dependencies: graph.dependencies.filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
+    summary: summarize(graph.tasks.filter((item) => subtree.has(item.id))),
+  };
+}
+
+/** 최상위부터 taskId까지의 제목 경로(예: 개발 › 배치 개발) */
+function pathText(graph: GraphDto, taskId: string): string {
+  const titles = titleMap(graph);
+  return [...ancestorIds(graph.tasks, taskId).reverse(), taskId].map((id) => titles.get(id) ?? id).join(' › ');
+}
+
+function edgeLine(edge: Edge, titles: Map<string, string>): string {
+  return `    ${titles.get(edge.from) ?? edge.from} → ${titles.get(edge.to) ?? edge.to}`;
+}
+
+function transitionLines(transitions: AutoTransition[]): string[] {
+  return transitions.map((item) => `자동 변경: ${item.title} → ${STATUS_LABELS[item.status]} (${TRANSITION_LABELS[item.cause]})`);
+}
+
 function prerequisiteText(item: TaskDto, titles: Map<string, string>): string {
-  if (item.predecessorIds.length === 0) return '-';
+  if (!hasPrerequisites(item)) return '-';
   if (item.prerequisitesMet) return '충족';
   return `미충족: ${item.unmetPrerequisiteIds.map((id) => titles.get(id) ?? id).join(', ')}`;
 }
 
-function taskTable(graph: GraphDto): string {
+/** 공정 표. 하위 공정은 상위 아래에 들여 쓰고, 상위에는 하위 완료 수를 붙인다. */
+function taskTable(graph: GraphDto, tasks: TaskDto[] = graph.tasks): string {
   const titles = titleMap(graph);
   return table([
     ['상태', '공정', 'ID', '선행 조건'],
-    ...graph.tasks.map((item) => [STATUS_LABELS[item.status], item.title, item.id, prerequisiteText(item, titles)]),
+    ...treeOrder(tasks).map(({ task: item, depth }) => [
+      STATUS_LABELS[item.status],
+      `${'  '.repeat(depth)}${item.title}${item.childCount > 0 ? ` (하위 ${item.doneChildCount}/${item.childCount})` : ''}`,
+      item.id,
+      prerequisiteText(item, titles),
+    ]),
   ]);
 }
 
-function graphText(graph: GraphDto): string {
-  const titles = titleMap(graph);
+function graphText(graph: GraphDto, full: GraphDto, rootId?: string): string {
+  const titles = titleMap(full);
   const { total, todo, inProgress, done } = graph.summary;
+  // 연결은 같은 층 안에만 있으므로 최상위가 아닌 층의 연결에는 그 층의 상위를 앞에 적는다.
+  const parentOf = new Map(full.tasks.map((item) => [item.id, item.parentId]));
+  const edgeText = (edge: Edge) => {
+    const parent = rootId ? null : parentOf.get(edge.from);
+    return `  ${parent ? `[${titles.get(parent)}] ` : ''}${titles.get(edge.from)} → ${titles.get(edge.to)}`;
+  };
   const lines = [
-    `${graph.project.name} (${graph.project.id})`,
-    `전체 ${total} · 미착수 ${todo} · 진행 중 ${inProgress} · 완료 ${done}`,
+    rootId ? `${graph.project.name} › ${pathText(full, rootId)} (${rootId})` : `${graph.project.name} (${graph.project.id})`,
+    `전체 ${total} · 미착수 ${todo} · 진행 중 ${inProgress} · 완료 ${done} (말단 공정 기준)`,
     '',
-    graph.tasks.length === 0 ? '공정이 없습니다.' : taskTable(graph),
+    graph.tasks.length === 0 ? '공정이 없습니다.' : taskTable(full, graph.tasks),
     '',
     `연결 ${graph.dependencies.length}개`,
-    ...graph.dependencies.map((edge) => `  ${titles.get(edge.from)} → ${titles.get(edge.to)}`),
+    ...graph.dependencies.map(edgeText),
   ];
   return lines.join('\n');
 }
@@ -377,30 +527,59 @@ function taskDetail(item: TaskDto, graph: GraphDto): string {
   const statusOf = new Map(graph.tasks.map((other) => [other.id, other.status]));
   const named = (ids: string[]) =>
     ids.length === 0 ? '없음' : ids.map((id) => `${titles.get(id)}(${STATUS_LABELS[statusOf.get(id)!]})`).join(', ');
-  const prerequisite =
-    item.predecessorIds.length === 0
-      ? '선행 공정 없음'
-      : item.prerequisitesMet
-        ? `충족 — ${named(item.predecessorIds)}`
-        : `미충족 — 완료 안 됨: ${named(item.unmetPrerequisiteIds)}`;
+  const prerequisite = !hasPrerequisites(item)
+    ? '선행 공정 없음'
+    : item.prerequisitesMet
+      ? '충족'
+      : `미충족 — 완료 안 됨: ${named(item.unmetPrerequisiteIds)}`;
+  const inherited = item.inheritedPredecessors.map(
+    ({ taskId, inheritedFrom }) =>
+      `${titles.get(taskId)}(${STATUS_LABELS[statusOf.get(taskId)!]}, ${titles.get(inheritedFrom)}의 선행)`,
+  );
+  const children = graph.tasks.filter((other) => other.parentId === item.id).map((other) => other.id);
   const rows = [
+    ['위치', item.parentId ? `${pathText(graph, item.parentId)} 아래` : '최상위'],
     ['상태', STATUS_LABELS[item.status]],
+    ...(item.inconsistency ? [['상태 모순', INCONSISTENCY_LABELS[item.inconsistency]]] : []),
     ['선행 조건', prerequisite],
+    ['직접 선행', named(item.predecessorIds)],
+    ...(item.parentId ? [['물려받은 선행', inherited.length === 0 ? '없음' : inherited.join(', ')]] : []),
     ['후속 공정', named(item.successorIds)],
+    ['하위 공정', item.childCount === 0 ? '없음' : `${item.doneChildCount}/${item.childCount} 완료 — ${named(children)}`],
     ['Jira', item.jiraUrl ? `${item.jiraKey ?? ''} ${item.jiraUrl}`.trim() : '-'],
     ['Confluence', item.confluenceUrl ?? '-'],
-    ['설명', item.description === '' ? '-' : item.description.replace(/\n/g, '\n' + ' '.repeat(14))],
+    ['설명', item.description === '' ? '-' : item.description.replace(/\n/g, '\n' + ' '.repeat(18))],
   ];
-  return [`${item.title} (${item.id})`, ...rows.map(([label, value]) => `  ${pad(label, 12)}${value}`)].join('\n');
+  return [`${item.title} (${item.id})`, ...rows.map(([label, value]) => `  ${pad(label, 16)}${value}`)].join('\n');
 }
 
-function deletePreview(item: TaskDto, graph: GraphDto, removed: Edge[], broken: Edge[]): string {
+function deletePreview(item: TaskDto, graph: GraphDto, descendants: string[], removed: Edge[], broken: Edge[]): string {
   const titles = titleMap(graph);
-  const edgeLine = (edge: Edge) => `    ${titles.get(edge.from)} → ${titles.get(edge.to)}`;
-  const lines = [`‘${item.title}’ 공정을 삭제하면:`, `  함께 삭제되는 연결 ${removed.length}개`, ...removed.map(edgeLine)];
-  if (broken.length > 0) lines.push('  순서 정보가 사라지는 공정 (자동으로 다시 잇지 않음)', ...broken.map(edgeLine));
+  const lines = [`‘${item.title}’ 공정을 삭제하면:`];
+  if (descendants.length > 0) {
+    const subtree = new Set(descendants);
+    lines.push(
+      `  함께 삭제되는 하위 공정 ${descendants.length}개`,
+      ...treeOrder(graph.tasks.filter((other) => subtree.has(other.id))).map(
+        ({ task: other, depth }) => `    ${'  '.repeat(depth)}${other.title}`,
+      ),
+    );
+  }
+  lines.push(`  함께 삭제되는 연결 ${removed.length}개`, ...removed.map((edge) => edgeLine(edge, titles)));
+  if (broken.length > 0) {
+    lines.push('  순서 정보가 사라지는 공정 (자동으로 다시 잇지 않음)', ...broken.map((edge) => edgeLine(edge, titles)));
+  }
   lines.push('삭제하려면 --yes를 붙여 다시 실행하세요.');
   return lines.join('\n');
+}
+
+function movePreview(item: TaskDto, graph: GraphDto, removed: Edge[]): string {
+  const titles = titleMap(graph);
+  return [
+    `‘${item.title}’ 공정을 옮기면 연결 ${removed.length}개가 지워집니다 (연결은 같은 층 안에서만 맺을 수 있음):`,
+    ...removed.map((edge) => edgeLine(edge, titles)),
+    '옮기려면 --yes를 붙여 다시 실행하세요.',
+  ].join('\n');
 }
 
 /** 한글처럼 두 칸을 차지하는 글자를 고려해 열을 맞춘다. */

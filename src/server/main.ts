@@ -7,7 +7,7 @@ const port = Number(process.env.PORT ?? 4000);
 const host = process.env.HOST ?? '127.0.0.1';
 const databaseFile = join(resolve(process.env.TEVRO_DATA_DIR ?? 'data'), 'tevro.db');
 
-const db = openDatabase(databaseFile);
+const db = openDatabase(databaseFile, (message) => console.log(message));
 const server = createApp({ store: createStore(db), webRoot: resolve(import.meta.dirname, '../../dist/web') });
 
 server.on('error', (error: NodeJS.ErrnoException) => {

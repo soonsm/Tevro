@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  analyzeHierarchy,
   analyzePrerequisites,
+  ancestorIds,
+  autoTransitions,
   brokenPaths,
+  descendantIds,
   findCycle,
+  findHierarchyCycle,
   isHttpUrl,
   jiraKeyFromUrl,
   reachable,
   summarize,
+  treeOrder,
   type TaskLike,
 } from '../src/shared/domain.ts';
 
@@ -113,6 +119,127 @@ describe('summarize', () => {
       { id: 'D', status: 'todo' },
     ];
     assert.deepEqual(summarize(tasks), { total: 4, todo: 2, inProgress: 1, done: 1 });
+  });
+
+  it('하위가 있는 공정은 빼고 말단 공정만 센다 (F-H09)', () => {
+    const tasks: TaskLike[] = [
+      { id: 'DEV', status: 'in-progress' },
+      { id: 'X', status: 'done', parentId: 'DEV' },
+      { id: 'Y', status: 'todo', parentId: 'DEV' },
+    ];
+    assert.deepEqual(summarize(tasks), { total: 2, todo: 1, inProgress: 0, done: 1 });
+  });
+});
+
+// PRD §5.3 예: A → 개발, 개발 → B, 개발 아래 X·Y, X 아래 X1
+const tree: TaskLike[] = [
+  { id: 'A', status: 'todo' },
+  { id: 'DEV', status: 'todo' },
+  { id: 'B', status: 'todo' },
+  { id: 'X', status: 'todo', parentId: 'DEV' },
+  { id: 'Y', status: 'todo', parentId: 'DEV' },
+  { id: 'X1', status: 'todo', parentId: 'X' },
+];
+const treeEdges = [
+  { from: 'A', to: 'DEV' },
+  { from: 'DEV', to: 'B' },
+  { from: 'X', to: 'Y' },
+];
+
+describe('계층: 선행 상속 (F-H04, AC-28)', () => {
+  const result = analyzePrerequisites(tree, treeEdges);
+
+  it('하위는 조상의 선행을 가까운 조상부터 물려받는다', () => {
+    assert.deepEqual(result.get('X1')!.inheritedPredecessors, [{ taskId: 'A', inheritedFrom: 'DEV' }]);
+    assert.deepEqual(result.get('Y')!.predecessorIds, ['X']);
+    assert.deepEqual(result.get('Y')!.inheritedPredecessors, [{ taskId: 'A', inheritedFrom: 'DEV' }]);
+    assert.deepEqual(result.get('Y')!.unmetPrerequisiteIds, ['X', 'A']);
+  });
+
+  it('상위 자신과 상위를 선행으로 둔 공정은 직접 선행만 본다', () => {
+    assert.deepEqual(result.get('DEV')!.inheritedPredecessors, []);
+    assert.deepEqual(result.get('B')!.unmetPrerequisiteIds, ['DEV']);
+  });
+
+  it('물려받은 선행이 완료되면 충족이다', () => {
+    const done = tree.map((task) => (task.id === 'A' ? { ...task, status: 'done' as const } : task));
+    assert.equal(analyzePrerequisites(done, treeEdges).get('X')!.prerequisitesMet, true);
+  });
+});
+
+describe('계층: 구조', () => {
+  it('조상은 가까운 상위부터, 자손은 위층부터 돌려준다', () => {
+    assert.deepEqual(ancestorIds(tree, 'X1'), ['X', 'DEV']);
+    assert.deepEqual(descendantIds(tree, 'DEV'), ['X', 'Y', 'X1']);
+    assert.deepEqual(descendantIds(tree, 'A'), []);
+  });
+
+  it('자기 자신이나 자손을 상위로 지정하면 고리 경로를 돌려준다 (AC-29)', () => {
+    assert.deepEqual(findHierarchyCycle(tree, 'DEV', 'X1'), ['X1', 'X', 'DEV']);
+    assert.deepEqual(findHierarchyCycle(tree, 'DEV', 'DEV'), ['DEV']);
+    assert.equal(findHierarchyCycle(tree, 'X1', 'Y'), null);
+  });
+
+  it('트리 순서로 펼치고, 목록에 없는 상위의 하위는 맨 위층으로 본다', () => {
+    assert.deepEqual(
+      treeOrder(tree).map(({ task, depth }) => `${depth}:${task.id}`),
+      ['0:A', '0:DEV', '1:X', '2:X1', '1:Y', '0:B'],
+    );
+    assert.deepEqual(
+      treeOrder(tree.filter((task) => task.parentId === 'DEV')).map(({ task, depth }) => `${depth}:${task.id}`),
+      ['0:X', '0:Y'],
+    );
+  });
+
+  it('하위 수·완료 수와 상위·하위 모순을 계산한다 (F-H06)', () => {
+    const tasks: TaskLike[] = [
+      { id: 'P', status: 'done' },
+      { id: 'P1', status: 'todo', parentId: 'P' },
+      { id: 'Q', status: 'in-progress' },
+      { id: 'Q1', status: 'done', parentId: 'Q' },
+    ];
+    const result = analyzeHierarchy(tasks);
+    assert.deepEqual(result.get('P'), { childCount: 1, doneChildCount: 0, inconsistency: 'PARENT_DONE_CHILD_OPEN' });
+    assert.deepEqual(result.get('Q'), { childCount: 1, doneChildCount: 1, inconsistency: 'CHILDREN_DONE_PARENT_OPEN' });
+    assert.deepEqual(result.get('P1'), { childCount: 0, doneChildCount: 0, inconsistency: null });
+  });
+});
+
+describe('계층: 자동 전이 (F-H05, §13-16)', () => {
+  const family = (statuses: Record<string, TaskLike['status']>): TaskLike[] => [
+    { id: 'TOP', status: statuses.TOP ?? 'todo' },
+    { id: 'P', status: statuses.P ?? 'todo', parentId: 'TOP' },
+    { id: 'C1', status: statuses.C1 ?? 'todo', parentId: 'P' },
+    { id: 'C2', status: statuses.C2 ?? 'todo', parentId: 'P' },
+  ];
+
+  it('하위가 모두 완료되면 상위를 완료로 바꾸고 그 위로 이어 간다', () => {
+    assert.deepEqual(autoTransitions(family({ C1: 'done', C2: 'done' }), ['P']), [
+      { taskId: 'P', status: 'done', cause: 'CHILDREN_DONE' },
+      { taskId: 'TOP', status: 'done', cause: 'CHILDREN_DONE' },
+    ]);
+  });
+
+  it('(a) 하위 하나가 착수되면 미착수 상위를 진행 중으로 바꾼다', () => {
+    assert.deepEqual(autoTransitions(family({ C1: 'in-progress' }), ['P']), [
+      { taskId: 'P', status: 'in-progress', cause: 'CHILD_STARTED' },
+      { taskId: 'TOP', status: 'in-progress', cause: 'CHILD_STARTED' },
+    ]);
+  });
+
+  it('(b) 완료된 상위는 하위가 다시 열려도 되돌리지 않는다', () => {
+    assert.deepEqual(autoTransitions(family({ TOP: 'done', P: 'done', C1: 'todo', C2: 'done' }), ['P']), []);
+  });
+
+  it('하위가 새로 들어온 상위에는 착수 규칙만 적용한다', () => {
+    assert.deepEqual(autoTransitions(family({ C1: 'done', C2: 'done' }), [], ['P']), [
+      { taskId: 'P', status: 'in-progress', cause: 'CHILD_STARTED' },
+      { taskId: 'TOP', status: 'in-progress', cause: 'CHILD_STARTED' },
+    ]);
+  });
+
+  it('하위가 없는 공정과 최상위(null)는 건드리지 않는다', () => {
+    assert.deepEqual(autoTransitions(family({}), ['C1', null, undefined]), []);
   });
 });
 
