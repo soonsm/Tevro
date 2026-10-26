@@ -41,6 +41,7 @@ Oracle 콘솔에서 Compute → Instances → Create instance:
 ## 3. 도메인 연결
 
 - **내 도메인:** DNS 관리 화면에서 A 레코드를 만들어 서버의 공인 IP를 가리키게 합니다(예: `tevro.example.com` → `203.0.113.10`).
+- **Cloudflare에서 관리하는 도메인:** A 레코드의 프록시 상태를 **DNS only(회색 구름)**로 둡니다. Proxied(주황 구름)로 두면 Cloudflare의 SSL/TLS 설정에 따라 '리디렉션이 너무 많음' 오류가 나거나 Caddy의 인증서 발급이 실패할 수 있습니다. 이 안내는 회색 구름 기준입니다.
 - **DuckDNS:** duckdns.org에 로그인 → 하위 도메인 이름을 정해 추가 → `current ip`에 서버 공인 IP를 넣고 `update ip`. 주소는 `<이름>.duckdns.org`가 됩니다. PC 브라우저에서 만들면 `current ip`에 그 PC의 IP가 들어가 있을 수 있으니 서버 IP로 바꿨는지 꼭 확인하세요.
 
 확인: 내 컴퓨터에서 `nslookup <도메인>` 결과가 서버 공인 IP면 됩니다. 반영에 몇 분 걸릴 수 있습니다.
@@ -99,6 +100,7 @@ node src/cli/main.ts project list
 | 할 일 | 방법 |
 | --- | --- |
 | 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·비밀번호를 그대로 씀) |
+| 도메인 바꾸기 | 새 도메인의 DNS를 서버 공인 IP로 건 뒤 `sudo bash /opt/tevro/deploy/oracle/install.sh --domain <새 도메인>`. 이후 갱신에도 새 도메인이 쓰이고, 예전 도메인으로는 더는 열리지 않습니다. 데이터와 비밀번호는 그대로입니다 |
 | 비밀번호 바꾸기 | `/etc/tevro/tevro.env`의 `TEVRO_PASSWORD`를 고친 뒤 `sudo systemctl restart tevro`. 12자 이상, 영문·숫자와 `. _ ~ ! @ % ^ * + = : , -`만 |
 | 상태·로그 | `systemctl status tevro`, `journalctl -u tevro -f`, 인증서는 `journalctl -u caddy -f` |
 | 다시 시작 | `sudo systemctl restart tevro` |
