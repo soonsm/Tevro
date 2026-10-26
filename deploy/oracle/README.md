@@ -41,7 +41,7 @@ Oracle 콘솔에서 Compute → Instances → Create instance:
 ## 3. 도메인 연결
 
 - **내 도메인:** DNS 관리 화면에서 A 레코드를 만들어 서버의 공인 IP를 가리키게 합니다(예: `tevro.example.com` → `203.0.113.10`).
-- **DuckDNS:** duckdns.org에 로그인 → 하위 도메인 이름을 정해 추가 → `current ip`에 서버 공인 IP를 넣고 `update ip`. 주소는 `<이름>.duckdns.org`가 됩니다.
+- **DuckDNS:** duckdns.org에 로그인 → 하위 도메인 이름을 정해 추가 → `current ip`에 서버 공인 IP를 넣고 `update ip`. 주소는 `<이름>.duckdns.org`가 됩니다. PC 브라우저에서 만들면 `current ip`에 그 PC의 IP가 들어가 있을 수 있으니 서버 IP로 바꿨는지 꼭 확인하세요.
 
 확인: 내 컴퓨터에서 `nslookup <도메인>` 결과가 서버 공인 IP면 됩니다. 반영에 몇 분 걸릴 수 있습니다.
 
@@ -53,9 +53,10 @@ SSH로 서버에 접속합니다. Ubuntu 이미지의 기본 사용자는 `ubunt
 ssh -i <내려받은 키 파일> ubuntu@<공인 IP>
 ```
 
-서버에서 실행합니다. `<도메인>`을 바꿔 넣으세요. 지금은 앱 코드가 `claude/zealous-ride-imn72j` 브랜치에 있습니다(`main`에 합치면 `--branch`를 빼도 됩니다).
+서버에서 실행합니다. `<도메인>`을 바꿔 넣으세요. 지금은 앱 코드가 `claude/zealous-ride-imn72j` 브랜치에 있습니다(`main`에 합치면 `--branch`를 빼도 됩니다). Ubuntu Minimal 이미지에는 `curl`이 없을 수 있어 첫 줄에서 설치합니다.
 
 ```sh
+sudo apt-get update && sudo apt-get install -y curl
 curl -fsSLO https://raw.githubusercontent.com/soonsm/Tevro/refs/heads/claude/zealous-ride-imn72j/deploy/oracle/install.sh
 sudo bash install.sh --domain <도메인> --branch claude/zealous-ride-imn72j
 ```
