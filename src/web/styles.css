@@ -470,10 +470,10 @@ textarea.input {
   color: var(--warn-fg);
 }
 
-/* 공정 카드(그래프 노드) */
+/* 공정 카드(그래프 노드). 크기는 layout.ts의 NODE_WIDTH·NODE_HEIGHT·PARENT_NODE_HEIGHT와 같다(높이를 고정해야 선의 연결점이 배치 계산과 맞는다). */
 .task-node {
   width: 176px;
-  min-height: 88px;
+  height: 92px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -514,6 +514,7 @@ textarea.input {
 
 /* 하위 공정을 품은 카드: 뒤에 카드가 한 장 더 겹친 모양 */
 .task-node.is-parent {
+  height: 128px;
   box-shadow: 4px 4px 0 -1px var(--surface), 4px 4px 0 0 var(--line-strong), 0 1px 2px rgba(16, 24, 40, 0.06);
 }
 

@@ -1,15 +1,20 @@
 import {
   Background,
   BackgroundVariant,
+  BaseEdge,
   Controls,
   Handle,
   MarkerType,
   Position,
   ReactFlow,
   applyNodeChanges,
+  getSmoothStepPath,
+  useInternalNode,
   useReactFlow,
   type AriaLabelConfig,
+  type EdgeProps,
   type Edge as FlowEdge,
+  type InternalNode,
   type Node,
   type NodeProps,
 } from '@xyflow/react';
@@ -17,10 +22,12 @@ import { createContext, memo, useContext, useEffect, useMemo, useRef, useState }
 import { INCONSISTENCY_LABELS, hasPrerequisites, reachable, type Edge } from '../shared/domain.ts';
 import type { GraphDto, TaskDto } from '../shared/types.ts';
 import { CheckIcon, ChevronRightIcon, DocIcon, StackIcon, StatusChip, WarnIcon } from './icons.tsx';
-import { NODE_HEIGHT, PARENT_NODE_HEIGHT, layoutPositions } from './layout.ts';
+import { NODE_HEIGHT, PARENT_NODE_HEIGHT, edgeKey, layoutGraph, roundedPath, routePoints, type Layout, type Point, type Route } from './layout.ts';
 import type { Selection } from './App.tsx';
 
 type TaskNodeType = Node<{ task: TaskDto }, 'task'>;
+/** route는 자동 배치 때 정한 경로, sourceAt·targetAt은 그때의 두 카드 위치 */
+type RoutedEdgeType = FlowEdge<{ route?: Route; sourceAt?: Point; targetAt?: Point }, 'routed'>;
 type Emphasis = 'normal' | 'selected' | 'related' | 'dimmed' | 'cycle';
 type EdgeTone = 'normal' | 'path' | 'dim' | 'cycle' | 'selected';
 
@@ -80,6 +87,7 @@ interface Props {
 export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, onSelect, onOpen, onConnect, onDeleteEdge }: Props) {
   const { fitView } = useReactFlow();
   const [nodes, setNodes] = useState<TaskNodeType[]>([]);
+  const [layout, setLayout] = useState<Layout | null>(null);
   const layoutKey = useRef('');
 
   // 연결은 같은 층 안에서만 맺으므로 이 층 공정끼리의 연결만 고르면 된다.
@@ -97,7 +105,7 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
         graph.project.id,
         levelId ?? '',
         level.tasks.map((task) => `${task.id}${task.childCount > 0 ? '+' : ''}`).join(','),
-        level.dependencies.map((edge) => `${edge.from}>${edge.to}`).join(','),
+        level.dependencies.map(edgeKey).join(','),
       ].join('|'),
     [graph.project.id, levelId, level],
   );
@@ -108,17 +116,18 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
     const key = `${structure}#${layoutRequest}`;
     const relayout = key !== layoutKey.current;
     layoutKey.current = key;
-    const positions = relayout
-      ? layoutPositions(
+    const next = relayout
+      ? layoutGraph(
           level.tasks.map((task) => ({ id: task.id, height: task.childCount > 0 ? PARENT_NODE_HEIGHT : NODE_HEIGHT })),
           level.dependencies,
         )
       : null;
+    if (next) setLayout(next);
     setNodes((previous) => {
       const byId = new Map(previous.map((node) => [node.id, node]));
       return level.tasks.map((task): TaskNodeType => {
         const old = byId.get(task.id);
-        const position = positions?.get(task.id) ?? old?.position ?? { x: 0, y: 0 };
+        const position = next?.positions.get(task.id) ?? old?.position ?? { x: 0, y: 0 };
         return old ? { ...old, position, data: { task } } : { id: task.id, type: 'task', position, data: { task } };
       });
     });
@@ -155,7 +164,7 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
     [selectedTaskId, highlight, cycle, graph.tasks, onOpen],
   );
 
-  const edges = useMemo<FlowEdge[]>(() => {
+  const edges = useMemo<RoutedEdgeType[]>(() => {
     const cycleEdges = new Set((cycle ?? []).slice(1).map((to, index) => `${cycle![index]}>${to}`));
     const onPath = (edge: Edge) => {
       if (!highlight || !selectedTaskId) return false;
@@ -164,7 +173,7 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
       return (upstream(edge.from) && upstream(edge.to)) || (downstream(edge.from) && downstream(edge.to));
     };
     return level.dependencies.map((edge) => {
-      const id = `${edge.from}>${edge.to}`;
+      const id = edgeKey(edge);
       const tone: EdgeTone =
         selection?.kind === 'edge' && selection.from === edge.from && selection.to === edge.to
           ? 'selected'
@@ -180,7 +189,8 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
         id,
         source: edge.from,
         target: edge.to,
-        type: 'smoothstep',
+        type: 'routed',
+        data: { route: layout?.routes.get(id), sourceAt: layout?.positions.get(edge.from), targetAt: layout?.positions.get(edge.to) },
         selected: tone === 'selected',
         markerEnd: { type: MarkerType.ArrowClosed, color, width: 16, height: 16, markerUnits: 'userSpaceOnUse' },
         style: { stroke: color, strokeWidth: tone === 'selected' ? 3 : 2 },
@@ -188,7 +198,7 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
         interactionWidth: 18,
       };
     });
-  }, [level.dependencies, highlight, selectedTaskId, selection, cycle]);
+  }, [level.dependencies, highlight, selectedTaskId, selection, cycle, layout]);
 
   return (
     <ViewContext.Provider value={view}>
@@ -196,6 +206,7 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))}
         onNodeClick={(_, node) => onSelect({ kind: 'task', id: node.id })}
         // 하위가 없는 카드는 두 번 눌러도 빈 층으로 들어가지 않는다. 첫 하위는 패널의 '하위 공정 추가'로 만든다.
@@ -285,6 +296,35 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
 });
 
 const nodeTypes = { task: TaskNode };
+
+const isAt = (node: InternalNode | undefined, at: Point | undefined) =>
+  !!node && !!at && Math.abs(node.internals.positionAbsolute.x - at.x) < 0.5 && Math.abs(node.internals.positionAbsolute.y - at.y) < 0.5;
+
+/** 자동 배치 때 정한 경로로 그린다. 카드를 끌어 옮겨 위치가 달라지면 그 카드의 선은 React Flow 기본 계단선으로 그린다. */
+const RoutedEdge = memo(function RoutedEdge({
+  source,
+  target,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  markerEnd,
+  style,
+  interactionWidth,
+}: EdgeProps<RoutedEdgeType>) {
+  const sourceNode = useInternalNode(source);
+  const targetNode = useInternalNode(target);
+  const path =
+    data?.route && isAt(sourceNode, data.sourceAt) && isAt(targetNode, data.targetAt)
+      ? roundedPath(routePoints(data.route, { x: sourceX, y: sourceY }, { x: targetX, y: targetY }))
+      : getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 5 })[0];
+  return <BaseEdge path={path} markerEnd={markerEnd} style={style} interactionWidth={interactionWidth} />;
+});
+
+const edgeTypes = { routed: RoutedEdge };
 
 /** 카드 셋째 줄. 완료 안 된 선행(물려받은 것 포함)이 1개면 이름, 2개 이상이면 개수만 보여 준다(이름은 패널에). */
 function PrerequisiteLine({ task, titles }: { task: TaskDto; titles: Map<string, string> }) {
