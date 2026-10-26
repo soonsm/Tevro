@@ -229,7 +229,7 @@ $busy"
     fail "'$branch' 브랜치에 Tevro 앱 코드(package.json)가 없습니다. --branch를 확인하세요."
 
   log "5/7 의존성 설치와 화면 빌드(작은 서버에서는 몇 분 걸립니다)"
-  as_tevro bash -c "cd '$APP_DIR' && npm ci --no-audit --no-fund --loglevel=error && npm run build --silent"
+  as_tevro bash -c "cd '$APP_DIR' && npm ci --no-audit --no-fund --no-update-notifier --loglevel=error && npm run build --silent --no-update-notifier"
 
   log "6/7 설정과 서비스"
   local password="${TEVRO_PASSWORD:-}" origin=given allowed='^[A-Za-z0-9._~!@%^*+=:,-]+$'
