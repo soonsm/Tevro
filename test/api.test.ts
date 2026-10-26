@@ -452,6 +452,32 @@ describe('저장과 웹 제공', () => {
     }
   });
 
+  it('TEVRO_PASSWORD를 설정하면 상태 확인 말고는 비밀번호가 맞아야 열린다', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tevro-auth-'));
+    const locked = await startServer(':memory:', directory, 'correct horse battery');
+    try {
+      writeFileSync(join(directory, 'index.html'), '<!doctype html><title>Tevro</title>');
+      const basic = (credentials: string) => ({ authorization: `Basic ${Buffer.from(credentials).toString('base64')}` });
+
+      const anonymous = await fetch(`${locked.origin}/api/v1/projects`);
+      assert.equal(anonymous.status, 401);
+      assert.match(anonymous.headers.get('www-authenticate') ?? '', /^Basic realm="Tevro"/);
+      assert.equal((await anonymous.json()).code, 'UNAUTHORIZED');
+      assert.equal((await fetch(`${locked.origin}/`)).status, 401);
+      const wrong = await fetch(`${locked.origin}/api/v1/projects`, { headers: basic('tevro:wrong password') });
+      assert.equal(wrong.status, 401);
+      assert.equal((await fetch(`${locked.origin}/api/v1/projects`, { headers: basic('no-colon') })).status, 401);
+
+      // 사용자 이름은 보지 않는다.
+      assert.equal((await fetch(`${locked.origin}/api/v1/projects`, { headers: basic('tevro:correct horse battery') })).status, 200);
+      assert.equal((await fetch(`${locked.origin}/`, { headers: basic(':correct horse battery') })).status, 200);
+      assert.equal((await fetch(`${locked.origin}/healthz`)).status, 200);
+    } finally {
+      await locked.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('화면 주소는 index.html로 돌려주고 외부 자원을 막는 CSP를 붙인다', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tevro-web-'));
     try {

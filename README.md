@@ -23,7 +23,7 @@
 
 로그인·권한, 템플릿(계층 복제 포함), Jira 연동(이슈 생성·상태 가져오기), 데드라인·담당자, 변경 묶음·dry-run·동시 수정 충돌 감지, 프로젝트 삭제, 여러 층을 한 화면에 펼쳐 보기, 폐쇄망 설치 패키지. ADR의 결정은 그대로 두고 구현만 미뤘습니다.
 
-> 로그인이 없으므로 서버는 기본적으로 이 컴퓨터(localhost)에서만 접속됩니다.
+> 로그인이 없으므로 서버는 기본적으로 이 컴퓨터(localhost)에서만 접속됩니다. 인터넷에 올릴 때는 임시 공용 비밀번호(`TEVRO_PASSWORD`)를 걸고 HTTPS 뒤에 둡니다(아래 '인터넷에 올리기').
 
 ## 실행
 
@@ -47,6 +47,7 @@ npm run demo
 | `HOST` | `127.0.0.1` | 다른 PC에서 접속하려면 `0.0.0.0` (로그인이 없으니 주의) |
 | `TEVRO_DATA_DIR` | `./data` | SQLite 파일을 둘 폴더 |
 | `TEVRO_SERVER` | `http://localhost:4000` | CLI가 접속할 서버 |
+| `TEVRO_PASSWORD` | 없음 | 서버: 설정하면 모든 접속에 이 비밀번호를 요구(12자 이상, 브라우저는 기본 로그인 창). CLI: 이 값으로 접속 |
 
 첫 버전으로 만든 `data/tevro.db`는 서버가 시작할 때 계층을 담을 수 있게 자동으로 올립니다(기존 공정은 모두 최상위가 됨). 올리기 전 파일은 같은 폴더에 `tevro.db.schema1-….bak`으로 남습니다. 자세한 내용은 [`Tevro/db-schema.md`](Tevro/db-schema.md) 7장에 있습니다.
 
@@ -75,8 +76,13 @@ node src/cli/main.ts task move <공정 ID> --top --detach --yes                 
 `npm link`를 한 번 하면 `node src/cli/main.ts` 대신 `tevro`로 쓸 수 있습니다.
 
 - `--json`을 붙이면 stdout에 `{"schemaVersion":1,"data":…}`를 쓰고, 실패하면 stderr에 `{"schemaVersion":1,"error":…}`를 씁니다.
-- 종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·`--yes` 필요, 3 검증 실패(순환, 다른 층 연결, 자기 하위로 옮기기, 연결이 남은 공정 옮기기 등), 6 대상 없음, 8 서버 연결 실패.
+- 종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·`--yes` 필요, 3 검증 실패(순환, 다른 층 연결, 자기 하위로 옮기기, 연결이 남은 공정 옮기기 등), 4 비밀번호 필요·틀림, 6 대상 없음, 8 서버 연결 실패.
+- 비밀번호가 걸린 서버에는 `TEVRO_PASSWORD` 환경변수로 접속합니다. 명령행 인자로는 받지 않습니다.
 - 상태를 바꾸다 상위 공정이 자동으로 바뀌면 함께 알려 줍니다(`--json`에서는 `autoTransitions`).
+
+## 인터넷에 올리기
+
+Oracle Cloud 무료 가상 서버에 올리는 스크립트와 안내가 [`deploy/oracle/`](deploy/oracle/README.md)에 있습니다. 서버에서 명령 두 줄로 Node.js·Caddy 설치, 빌드, systemd 서비스, HTTPS 인증서, 방화벽 설정까지 끝납니다. 정식 로그인 전까지는 임시 공용 비밀번호로 막습니다.
 
 ## 확인 시나리오
 
@@ -116,6 +122,7 @@ npm run typecheck  # TypeScript 검사
 | `src/web` | React + React Flow 화면. 빌드 결과(`dist/web`)를 서버가 함께 제공 |
 | `src/cli` | Commander.js CLI |
 | `scripts` | `demo`(예시 데이터), `dev`(개발 서버) |
+| `deploy/oracle` | Oracle Cloud 설치 스크립트와 안내 |
 | `test` | `node:test` 테스트(도메인 규칙, API, CLI, 스키마 마이그레이션) |
 | `Tevro/` | 요구사항·결정 기록 문서(Obsidian) |
 | `Tevro/db-schema.md` | 테이블 설계서(ERD, 컬럼 설명, 제약) |

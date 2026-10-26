@@ -1,0 +1,123 @@
+# Oracle Cloud에 올리기
+
+Oracle Cloud의 무료(Always Free) 가상 서버에 Tevro를 올려, 인터넷이 되는 곳 어디서나 `https://<도메인>`으로 쓰는 방법입니다. 설치는 `install.sh` 한 번으로 끝납니다.
+
+구성은 이렇습니다. Caddy가 HTTPS 인증서(Let's Encrypt)를 자동으로 받아 443번 포트로 접속을 받고, 같은 서버 안의 Tevro(127.0.0.1:4000)로 넘깁니다. Tevro 포트는 밖에 열지 않습니다.
+
+> **임시 공용 비밀번호:** 정식 로그인([ADR-0004](../../Tevro/adr/0004-authentication-authorization.md))을 만들기 전까지 쓰는 장치입니다. 모두 같은 비밀번호를 쓰고, 누가 무엇을 바꿨는지는 남지 않습니다. 비밀번호를 아는 사람은 모든 데이터를 고치고 지울 수 있습니다.
+
+## 준비물
+
+- Oracle Cloud 계정
+- 도메인. 없으면 [DuckDNS](https://www.duckdns.org)에서 `<이름>.duckdns.org`를 무료로 만들 수 있습니다.
+- SSH로 서버에 접속할 수 있는 컴퓨터(macOS·Linux 터미널, Windows PowerShell)
+
+## 1. 가상 서버 만들기
+
+이미 쓰는 Ubuntu 서버가 있으면 그 서버를 써도 됩니다. 단, 80·443번 포트를 다른 프로그램(nginx 등)이 쓰고 있으면 설치 스크립트가 멈춥니다.
+
+Oracle 콘솔에서 Compute → Instances → Create instance:
+
+| 항목 | 고를 것 |
+| --- | --- |
+| Image | Canonical Ubuntu 24.04(또는 22.04) |
+| Shape | `VM.Standard.A1.Flex`(Ampere, OCPU 1개·메모리 6GB면 충분) 또는 `VM.Standard.E2.1.Micro`(메모리 1GB, 느리지만 동작). 'Always Free-eligible' 표시가 있는 것 |
+| Networking | 공인 IPv4 주소 자동 할당(Assign a public IPv4 address)을 켬 |
+| SSH keys | 키를 만들어 내려받거나, 가진 공개 키를 올림 |
+
+만든 뒤 인스턴스 상세 화면의 **공인 IP 주소(Public IP address)**를 적어 둡니다.
+
+## 2. 80·443 포트 열기(Oracle 콘솔)
+
+인스턴스 상세 화면 → 서브넷(Subnet) → 보안 목록(Security Lists)의 기본 목록 → 수신 규칙 추가(Add Ingress Rules)에서 두 규칙을 더합니다.
+
+| Source CIDR | IP Protocol | Destination Port Range |
+| --- | --- | --- |
+| `0.0.0.0/0` | TCP | `80` |
+| `0.0.0.0/0` | TCP | `443` |
+
+80번은 인증서 발급과 HTTPS로 넘겨 주는 데 씁니다. 서버 안의 방화벽(iptables)은 설치 스크립트가 엽니다. 네트워크 보안 그룹(NSG)을 쓰는 서버라면 그 NSG에 같은 규칙을 더합니다.
+
+## 3. 도메인 연결
+
+- **내 도메인:** DNS 관리 화면에서 A 레코드를 만들어 서버의 공인 IP를 가리키게 합니다(예: `tevro.example.com` → `203.0.113.10`).
+- **DuckDNS:** duckdns.org에 로그인 → 하위 도메인 이름을 정해 추가 → `current ip`에 서버 공인 IP를 넣고 `update ip`. 주소는 `<이름>.duckdns.org`가 됩니다.
+
+확인: 내 컴퓨터에서 `nslookup <도메인>` 결과가 서버 공인 IP면 됩니다. 반영에 몇 분 걸릴 수 있습니다.
+
+## 4. 설치
+
+SSH로 서버에 접속합니다. Ubuntu 이미지의 기본 사용자는 `ubuntu`입니다.
+
+```sh
+ssh -i <내려받은 키 파일> ubuntu@<공인 IP>
+```
+
+서버에서 실행합니다. `<도메인>`을 바꿔 넣으세요. 지금은 앱 코드가 `claude/zealous-ride-imn72j` 브랜치에 있습니다(`main`에 합치면 `--branch`를 빼도 됩니다).
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/soonsm/Tevro/refs/heads/claude/zealous-ride-imn72j/deploy/oracle/install.sh
+sudo bash install.sh --domain <도메인> --branch claude/zealous-ride-imn72j
+```
+
+작은 서버에서는 10분 가까이 걸릴 수 있습니다. 스크립트가 하는 일:
+
+1. 기본 패키지, Node.js 22(NodeSource), Caddy(공식 저장소) 설치. 메모리가 2GB보다 작으면 빌드용 스왑 2GB를 만듭니다.
+2. `tevro` 시스템 사용자를 만들고, 코드를 `/opt/tevro`에 받아 빌드합니다.
+3. 설정 파일 `/etc/tevro/tevro.env`(비밀번호 포함, root만 읽음)와 systemd 서비스 `tevro`를 만들고 시작합니다.
+4. Caddy를 설정하고, Oracle Ubuntu 이미지의 iptables 방화벽에 80·443을 엽니다.
+
+끝나면 주소와 **비밀번호**가 한 번 나옵니다. 지금 적어 두세요. 나중에 다시 보려면 `sudo grep TEVRO_PASSWORD /etc/tevro/tevro.env`.
+
+## 5. 접속
+
+브라우저에서 `https://<도메인>`을 엽니다. 로그인 창이 뜨면 사용자 이름은 비우거나 아무거나 쓰고, 비밀번호를 넣습니다. 처음 몇 분은 인증서를 받는 중이라 접속이 안 될 수 있습니다.
+
+예시 프로젝트를 넣어 보려면 서버에서:
+
+```sh
+sudo bash -c 'set -a && . /etc/tevro/tevro.env && cd /opt/tevro && node scripts/demo.ts'
+```
+
+마지막 줄에 나오는 `http://localhost:4000/...` 대신 `https://<도메인>`으로 여세요.
+
+## 6. 내 컴퓨터의 CLI로 쓰기
+
+저장소를 받은 컴퓨터에서 서버 주소와 비밀번호를 환경변수로 넘깁니다. 비밀번호는 명령행 인자로 받지 않습니다.
+
+```sh
+export TEVRO_SERVER=https://<도메인>
+export TEVRO_PASSWORD=<비밀번호>
+node src/cli/main.ts project list
+```
+
+비밀번호가 없거나 틀리면 종료 코드 4로 끝납니다.
+
+## 운영
+
+| 할 일 | 방법 |
+| --- | --- |
+| 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·비밀번호를 그대로 씀) |
+| 비밀번호 바꾸기 | `/etc/tevro/tevro.env`의 `TEVRO_PASSWORD`를 고친 뒤 `sudo systemctl restart tevro`. 12자 이상, 영문·숫자와 `. _ ~ ! @ % ^ * + = : , -`만 |
+| 상태·로그 | `systemctl status tevro`, `journalctl -u tevro -f`, 인증서는 `journalctl -u caddy -f` |
+| 다시 시작 | `sudo systemctl restart tevro` |
+| 데이터 위치 | `/var/lib/tevro/data/tevro.db`(같은 폴더의 `-wal`·`-shm` 파일까지 한 묶음) |
+| 백업 | `sudo systemctl stop tevro && sudo cp -a /var/lib/tevro/data ~/tevro-backup-$(date +%F) && sudo systemctl start tevro`. Oracle의 부트 볼륨 백업(무료 5개)을 함께 쓰면 좋습니다 |
+
+스키마가 바뀐 버전으로 갱신하면 서버가 시작할 때 데이터 파일을 올리고, 올리기 전 파일을 같은 폴더에 `tevro.db.schema…bak`으로 남깁니다.
+
+## 알아 둘 것
+
+- **유휴 서버 회수:** Oracle은 Always Free 서버가 7일 동안 CPU·네트워크(Ampere는 메모리도) 사용률 20% 미만이면 회수할 수 있다고 [공식 문서](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)에 적고 있습니다. Tevro는 평소 거의 쉬므로 해당될 수 있습니다. 백업을 두고, 서버가 멈추면 콘솔에서 다시 시작하세요. 종량제(Pay As You Go) 계정은 회수 대상에서 빠진다는 이야기가 있지만 공식 문서로 확인하지 못했습니다.
+- **데이터 위치:** 데이터가 Oracle Cloud에 저장됩니다. 실제 업무 데이터를 넣어도 되는지는 사내 기준을 확인하세요. 최종 설치는 폐쇄망이 기준입니다(PRD N-02).
+- **시험 범위:** 이 스크립트는 Ubuntu 24.04(x86_64) 컨테이너에서 설치, 비밀번호, HTTPS 프록시, 갱신, 방화벽 단계를 확인했습니다. Ampere(arm64) 서버와 실제 Let's Encrypt 발급은 시험하지 못했습니다.
+
+## 문제 해결
+
+| 증상 | 확인할 것 |
+| --- | --- |
+| 브라우저가 접속하지 못함 | 2번의 수신 규칙(80·443), `nslookup <도메인>`이 공인 IP인지, `sudo ss -ltnp \| grep -E ':(80\|443) '`에 caddy가 있는지 |
+| 인증서 오류 | DNS가 반영되기 전에 발급을 시도한 경우가 많습니다. 몇 분 기다리거나 `sudo systemctl restart caddy`. 같은 도메인으로 발급에 계속 실패하면 Let's Encrypt가 한동안 막으므로 `journalctl -u caddy`의 원인을 먼저 고칩니다 |
+| 로그인 창이 계속 다시 뜸 | 비밀번호 확인: `sudo grep TEVRO_PASSWORD /etc/tevro/tevro.env` |
+| 설치가 빌드 단계에서 멈춤 | 메모리 부족일 수 있습니다. `free -h`로 스왑을 확인하거나 메모리가 더 큰 Shape를 씁니다 |
+| `502` 오류 | Tevro 서버가 멈춘 상태입니다. `journalctl -u tevro -n 50` |

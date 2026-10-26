@@ -9,9 +9,9 @@ export interface TestServer {
 }
 
 /** 빈 DB로 서버를 띄운다. 파일 경로를 주면 그 파일을 쓴다(재시작 시험용). */
-export async function startServer(databaseFile = ':memory:', webRoot?: string): Promise<TestServer> {
+export async function startServer(databaseFile = ':memory:', webRoot?: string, password?: string): Promise<TestServer> {
   const db = openDatabase(databaseFile);
-  const server = createApp({ store: createStore(db), webRoot });
+  const server = createApp({ store: createStore(db), webRoot, password });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {

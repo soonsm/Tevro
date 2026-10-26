@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
@@ -44,8 +45,20 @@ interface Route {
   handle: (request: Request) => { status?: number; body: unknown };
 }
 
+interface AppOptions {
+  store: Store;
+  webRoot?: string;
+  /**
+   * 설정하면 상태 확인(/healthz) 말고는 모든 요청에 이 비밀번호를 요구한다(HTTP Basic 인증, 사용자 이름은 보지 않음).
+   * 정식 로그인(ADR-0004)을 만들기 전에 서버를 인터넷에 올릴 때 쓰는 임시 장치다. HTTPS 뒤에서만 쓴다.
+   */
+  password?: string;
+}
+
 /** API(/api/v1)와 웹 정적 파일을 함께 제공하는 서버. GUI와 CLI는 같은 API만 쓴다(PRD 원칙 7). */
-export function createApp({ store, webRoot }: { store: Store; webRoot?: string }): Server {
+export function createApp({ store, webRoot, password }: AppOptions): Server {
+  const passwordDigest = password ? digest(password) : null;
+
   const routes: Route[] = [
     route('GET', '/healthz', () => ({ body: { status: 'ok' } })),
     route('GET', '/api/v1/projects', () => ({ body: store.listProjects() })),
@@ -74,6 +87,9 @@ export function createApp({ store, webRoot }: { store: Store; webRoot?: string }
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
+      if (passwordDigest && url.pathname !== '/healthz' && !hasPassword(req, passwordDigest)) {
+        throw new ApiError(401, 'UNAUTHORIZED', '이 서버는 비밀번호가 필요합니다.');
+      }
       if (url.pathname === '/healthz' || url.pathname.startsWith('/api/')) {
         await handleApi(req, res, url);
       } else {
@@ -182,6 +198,23 @@ function sendProblem(res: ServerResponse, error: unknown): void {
     res.end();
     return;
   }
-  res.writeHead(problem.status, { 'content-type': 'application/problem+json; charset=utf-8' });
+  res.writeHead(problem.status, {
+    'content-type': 'application/problem+json; charset=utf-8',
+    // 브라우저는 이 머리글을 보고 기본 로그인 창을 띄운다.
+    ...(problem.status === 401 ? { 'www-authenticate': 'Basic realm="Tevro", charset="UTF-8"' } : {}),
+  });
   res.end(JSON.stringify(problem));
+}
+
+function digest(text: string): Buffer {
+  return createHash('sha256').update(text, 'utf8').digest();
+}
+
+/** Authorization: Basic 머리글의 비밀번호가 맞는지. 길이가 달라도 같은 시간에 비교하도록 해시끼리 비교한다. */
+function hasPassword(req: IncomingMessage, expected: Buffer): boolean {
+  const match = /^Basic\s+([A-Za-z0-9+/]+={0,2})\s*$/i.exec(req.headers.authorization ?? '');
+  if (!match) return false;
+  const credentials = Buffer.from(match[1], 'base64').toString('utf8');
+  const colon = credentials.indexOf(':');
+  return colon !== -1 && timingSafeEqual(digest(credentials.slice(colon + 1)), expected);
 }

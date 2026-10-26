@@ -14,9 +14,15 @@ before(async () => {
 
 after(() => server.close());
 
-function tevro(args: string[], serverUrl = server.origin): Promise<{ code: number; stdout: string; stderr: string }> {
+function tevro(
+  args: string[],
+  serverUrl = server.origin,
+  extraEnv: Record<string, string> = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const env: NodeJS.ProcessEnv = { ...process.env, TEVRO_SERVER: serverUrl, ...extraEnv };
+  if (!('TEVRO_PASSWORD' in extraEnv)) delete env.TEVRO_PASSWORD;
   return new Promise((done) => {
-    execFile(process.execPath, [CLI, ...args], { env: { ...process.env, TEVRO_SERVER: serverUrl } }, (error, stdout, stderr) => {
+    execFile(process.execPath, [CLI, ...args], { env }, (error, stdout, stderr) => {
       done({ code: error ? Number(error.code) : 0, stdout, stderr });
     });
   });
@@ -89,6 +95,23 @@ describe('CLI', () => {
     assert.equal(result.code, 0);
     assert.match(result.stdout, /전체 1 · 미착수 0 · 진행 중 0 · 완료 1/);
     assert.match(result.stdout, /연결 0개/);
+  });
+});
+
+describe('CLI 비밀번호', () => {
+  it('비밀번호가 걸린 서버는 TEVRO_PASSWORD가 없으면 종료 코드 4, 있으면 성공한다', async () => {
+    const locked = await startServer(':memory:', undefined, 'correct horse battery');
+    try {
+      const missing = await tevro(['project', 'list'], locked.origin);
+      assert.equal(missing.code, 4);
+      assert.match(missing.stderr, /TEVRO_PASSWORD 환경변수/);
+      assert.equal((await tevro(['project', 'list'], locked.origin, { TEVRO_PASSWORD: 'wrong password!' })).code, 4);
+      const ok = await tevro(['project', 'list', '--json'], locked.origin, { TEVRO_PASSWORD: 'correct horse battery' });
+      assert.equal(ok.code, 0, ok.stderr);
+      assert.deepEqual(JSON.parse(ok.stdout).data, []);
+    } finally {
+      await locked.close();
+    }
   });
 });
 

@@ -27,7 +27,7 @@ import type {
 } from '../shared/types.ts';
 
 // ADR-0007 종료 코드 중 MVP에서 쓰는 것
-const EXIT = { ok: 0, failure: 1, usage: 2, validation: 3, notFound: 6, unreachable: 8 } as const;
+const EXIT = { ok: 0, failure: 1, usage: 2, validation: 3, auth: 4, notFound: 6, unreachable: 8 } as const;
 
 // VALIDATION_* 밖에서 종료 코드 3(검증 실패)으로 다루는 구조 검증 오류
 const STRUCTURE_CODES = new Set([
@@ -79,7 +79,8 @@ const program = new Command('tevro')
   .configureOutput({ outputError: (text, write) => (jsonRequested ? undefined : write(text)) })
   .addHelpText(
     'after',
-    '\n종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·--yes 필요, 3 검증 실패, 6 대상 없음, 8 서버 연결 실패',
+    '\n서버에 비밀번호가 걸려 있으면 TEVRO_PASSWORD 환경변수에 넣으세요(명령행 인자로는 받지 않음).' +
+      '\n종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·--yes 필요, 3 검증 실패, 4 비밀번호 필요·틀림, 6 대상 없음, 8 서버 연결 실패',
   );
 
 const project = program.command('project').description('프로젝트');
@@ -387,13 +388,18 @@ type Client = ReturnType<typeof client>;
 
 function client(command: Command) {
   const base = (globals(command).server ?? process.env.TEVRO_SERVER ?? 'http://localhost:4000').replace(/\/+$/, '');
+  // 비밀번호는 환경변수로만 받는다. 명령행 인자는 셸 기록과 프로세스 목록에 남는다(ADR-0004).
+  const password = process.env.TEVRO_PASSWORD;
+  const auth: Record<string, string> = password
+    ? { authorization: `Basic ${Buffer.from(`tevro:${password}`).toString('base64')}` }
+    : {};
 
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
     let response: Response;
     try {
       response = await fetch(base + path, {
         method,
-        headers: body === undefined ? {} : { 'content-type': 'application/json' },
+        headers: body === undefined ? auth : { ...auth, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(15_000),
       });
@@ -412,6 +418,9 @@ function client(command: Command) {
     }
     if (!response.ok) {
       const problem = data as Problem;
+      if (problem.code === 'UNAUTHORIZED') {
+        problem.detail += password ? ' TEVRO_PASSWORD 값이 맞는지 확인하세요.' : ' TEVRO_PASSWORD 환경변수에 서버 비밀번호를 넣으세요.';
+      }
       throw new CliFailure(exitCodeOf(problem.code), problem as unknown as CliErrorBody);
     }
     return data as T;
@@ -427,6 +436,7 @@ function client(command: Command) {
 
 function exitCodeOf(code: string): number {
   if (code.startsWith('VALIDATION_') || STRUCTURE_CODES.has(code)) return EXIT.validation;
+  if (code === 'UNAUTHORIZED') return EXIT.auth;
   return code === 'NOT_FOUND' ? EXIT.notFound : EXIT.failure;
 }
 

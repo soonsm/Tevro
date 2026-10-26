@@ -6,9 +6,17 @@ const port = Number(process.env.PORT ?? 4000);
 // 인증이 없는 MVP라 기본으로는 이 컴퓨터에서만 접속할 수 있게 연다. 다른 PC에서 열려면 HOST=0.0.0.0.
 const host = process.env.HOST ?? '127.0.0.1';
 const databaseFile = join(resolve(process.env.TEVRO_DATA_DIR ?? 'data'), 'tevro.db');
+// 정식 로그인(ADR-0004) 전까지 인터넷에 올릴 때 쓰는 임시 공용 비밀번호. 비워 두면 묻지 않는다.
+const password = process.env.TEVRO_PASSWORD || undefined;
+const localOnly = ['127.0.0.1', 'localhost', '::1'].includes(host);
+
+if (password !== undefined && password.length < 12) {
+  console.error('TEVRO_PASSWORD는 12자 이상이어야 합니다. 예: openssl rand -base64 18');
+  process.exit(1);
+}
 
 const db = openDatabase(databaseFile, (message) => console.log(message));
-const server = createApp({ store: createStore(db), webRoot: resolve(import.meta.dirname, '../../dist/web') });
+const server = createApp({ store: createStore(db), webRoot: resolve(import.meta.dirname, '../../dist/web'), password });
 
 server.on('error', (error: NodeJS.ErrnoException) => {
   if (error.code === 'EADDRINUSE') {
@@ -21,6 +29,10 @@ server.on('error', (error: NodeJS.ErrnoException) => {
 server.listen(port, host, () => {
   console.log(`Tevro 서버: http://${host === '127.0.0.1' ? 'localhost' : host}:${port}`);
   console.log(`데이터 파일: ${databaseFile}`);
+  console.log(`비밀번호 보호: ${password ? '켜짐' : '꺼짐'}`);
+  if (!password && !localOnly) {
+    console.warn('주의: 로그인이 없는 서버를 다른 PC에서도 접속할 수 있게 열었습니다. 누구나 고치고 지울 수 있습니다. TEVRO_PASSWORD를 설정하세요.');
+  }
 });
 
 // 종료 신호를 받으면 새 요청을 받지 않고, 진행 중인 요청을 마친 뒤 DB를 닫는다(ADR-0002).

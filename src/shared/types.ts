@@ -107,6 +107,7 @@ export type ErrorCode =
   | 'CROSS_LEVEL_DEPENDENCY'
   | 'HAS_DEPENDENCIES'
   | 'NOT_FOUND'
+  | 'UNAUTHORIZED'
   | 'INTERNAL';
 
 /** 오류 응답(application/problem+json). 오류 종류에 따라 아래 확장 멤버가 붙는다. */
