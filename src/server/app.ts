@@ -2,8 +2,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
-import { ApiError, internalError } from './errors.ts';
+import { ApiError, internalError, invalidInput } from './errors.ts';
 import type { Store } from './store.ts';
+import { readSandboxId, type Sandbox, type Trial } from './trial.ts';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -36,6 +37,10 @@ interface Request {
   params: Record<string, string>;
   query: URLSearchParams;
   body: Record<string, unknown>;
+  store: Store;
+  /** 체험 모드에서 요청을 보낸 창의 체험 ID와 사본 */
+  sandboxId?: string;
+  sandbox?: Sandbox;
 }
 
 interface Route {
@@ -46,7 +51,10 @@ interface Route {
 }
 
 interface AppOptions {
-  store: Store;
+  /** 데이터를 둘 저장소. 체험 모드면 대신 trial을 넘긴다 */
+  store?: Store;
+  /** 체험 모드: 창마다 예시 데이터의 사본을 쓴다(src/server/trial.ts) */
+  trial?: Trial;
   webRoot?: string;
   /**
    * 설정하면 상태 확인(/healthz) 말고는 모든 요청에 이 비밀번호를 요구한다(HTTP Basic 인증, 사용자 이름은 보지 않음).
@@ -56,41 +64,58 @@ interface AppOptions {
 }
 
 /** API(/api/v1)와 웹 정적 파일을 함께 제공하는 서버. GUI와 CLI는 같은 API만 쓴다(PRD 원칙 7). */
-export function createApp({ store, webRoot, password }: AppOptions): Server {
+export function createApp({ store, trial, webRoot, password }: AppOptions): Server {
+  if ((store === undefined) === (trial === undefined)) throw new Error('store와 trial 중 하나만 넘깁니다.');
   const passwordDigest = password ? digest(password) : null;
 
   const routes: Route[] = [
-    route('GET', '/healthz', () => ({ body: { status: 'ok' } })),
-    route('GET', '/api/v1/projects', () => ({ body: store.listProjects() })),
-    route('POST', '/api/v1/projects', ({ body }) => ({ status: 201, body: store.createProject(body) })),
-    route('GET', '/api/v1/projects/:projectId/graph', ({ params }) => ({ body: store.getGraph(params.projectId) })),
-    route('POST', '/api/v1/projects/:projectId/tasks', ({ params, body }) => ({
+    route('GET', '/api/v1/projects', ({ store }) => ({ body: store.listProjects() })),
+    route('POST', '/api/v1/projects', ({ store, body }) => ({ status: 201, body: store.createProject(body) })),
+    route('GET', '/api/v1/projects/:projectId/graph', ({ store, params }) => ({ body: store.getGraph(params.projectId) })),
+    route('POST', '/api/v1/projects/:projectId/tasks', ({ store, params, body }) => ({
       status: 201,
       body: store.createTask(params.projectId, body),
     })),
-    route('POST', '/api/v1/projects/:projectId/dependencies', ({ params, body }) => ({
+    route('POST', '/api/v1/projects/:projectId/dependencies', ({ store, params, body }) => ({
       status: 201,
       body: store.addDependency(params.projectId, body),
     })),
-    route('DELETE', '/api/v1/projects/:projectId/dependencies', ({ params, query }) => ({
+    route('DELETE', '/api/v1/projects/:projectId/dependencies', ({ store, params, query }) => ({
       body: store.removeDependency(params.projectId, {
         from: query.get('from') ?? undefined,
         to: query.get('to') ?? undefined,
       }),
     })),
-    route('GET', '/api/v1/tasks/:taskId', ({ params }) => ({ body: store.getTask(params.taskId) })),
-    route('PATCH', '/api/v1/tasks/:taskId', ({ params, body }) => ({ body: store.updateTask(params.taskId, body) })),
-    route('POST', '/api/v1/tasks/:taskId/move', ({ params, body }) => ({ body: store.moveTask(params.taskId, body) })),
-    route('DELETE', '/api/v1/tasks/:taskId', ({ params }) => ({ body: store.deleteTask(params.taskId) })),
+    route('GET', '/api/v1/tasks/:taskId', ({ store, params }) => ({ body: store.getTask(params.taskId) })),
+    route('PATCH', '/api/v1/tasks/:taskId', ({ store, params, body }) => ({ body: store.updateTask(params.taskId, body) })),
+    route('POST', '/api/v1/tasks/:taskId/move', ({ store, params, body }) => ({ body: store.moveTask(params.taskId, body) })),
+    route('DELETE', '/api/v1/tasks/:taskId', ({ store, params }) => ({ body: store.deleteTask(params.taskId) })),
   ];
+  if (!trial) {
+    // 화면이 체험 모드인지 물을 때 콘솔에 404 오류가 남지 않게, 체험 모드가 아니면 내용 없이 답한다.
+    routes.push(route('GET', '/api/v1/trial', () => ({ status: 204, body: undefined })));
+  } else {
+    routes.push(
+      route('GET', '/api/v1/trial', ({ sandbox }) => ({ body: trial.status(sandbox!) })),
+      route('POST', '/api/v1/trial/reset', ({ sandboxId, body }) => {
+        if (typeof body.dataset !== 'string') throw invalidInput('불러올 예시 데이터(dataset)를 지정하세요.');
+        return { body: trial.status(trial.reset(sandboxId!, body.dataset)) };
+      }),
+    );
+  }
 
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
-      if (passwordDigest && url.pathname !== '/healthz' && !hasPassword(req, passwordDigest)) {
+      if (url.pathname === '/healthz') {
+        if (req.method !== 'GET') throw new ApiError(404, 'NOT_FOUND', `API 경로가 없습니다: ${req.method} ${url.pathname}`);
+        sendJson(res, 200, { status: 'ok' });
+        return;
+      }
+      if (passwordDigest && !hasPassword(req, passwordDigest)) {
         throw new ApiError(401, 'UNAUTHORIZED', '이 서버는 비밀번호가 필요합니다.');
       }
-      if (url.pathname === '/healthz' || url.pathname.startsWith('/api/')) {
+      if (url.pathname.startsWith('/api/')) {
         await handleApi(req, res, url);
       } else {
         await serveStatic(res, url.pathname);
@@ -105,7 +130,13 @@ export function createApp({ store, webRoot, password }: AppOptions): Server {
       const match = method === req.method ? pattern.exec(url.pathname) : null;
       if (!match) continue;
       const params = Object.fromEntries(keys.map((key, index) => [key, decodePath(match[index + 1])]));
-      const result = handle({ params, query: url.searchParams, body: await readJsonBody(req) });
+      const body = await readJsonBody(req);
+      // 체험 모드면 요청을 보낸 창의 사본을, 아니면 하나뿐인 저장소를 쓴다. 본문을 다 읽은 뒤에 고르므로
+      // 그사이 같은 창이 예시 데이터를 다시 불러와도 지워진 사본을 쓰지 않는다.
+      const sandboxId = trial ? readSandboxId(req.headers['x-tevro-sandbox']) : undefined;
+      const sandbox = trial ? trial.sandbox(sandboxId!, headerValue(req.headers['x-tevro-dataset'])) : undefined;
+      const result = handle({ params, query: url.searchParams, body, store: sandbox ? sandbox.store : store!, sandboxId, sandbox });
+      if (sandbox && req.method !== 'GET' && !url.pathname.startsWith('/api/v1/trial')) sandbox.dirty = true;
       sendJson(res, result.status ?? 200, result.body);
       return;
     }
@@ -164,6 +195,10 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   return body as Record<string, unknown>;
 }
 
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function decodePath(segment: string): string {
   const decoded = safeDecode(segment);
   if (decoded === null) throw new ApiError(400, 'VALIDATION_INPUT', `주소를 해석할 수 없습니다: ${segment}`);
@@ -187,6 +222,11 @@ async function isFile(path: string): Promise<boolean> {
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  if (status === 204) {
+    res.writeHead(204, { 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
 }

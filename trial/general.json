@@ -1,0 +1,34 @@
+{
+  "label": "일반직용 데이터",
+  "order": 2,
+  "projects": [
+    {
+      "name": "신입사원 입사 준비",
+      "tasks": [
+        { "key": "offer", "title": "입사 확정 안내", "status": "done" },
+        { "key": "papers", "title": "입사 서류 받기", "status": "done" },
+        { "key": "mentor", "title": "멘토 지정", "status": "done" },
+        { "key": "workplace", "title": "근무 환경 준비", "status": "todo" },
+        { "key": "seat", "title": "자리 배정", "status": "done", "parent": "workplace" },
+        { "key": "account", "title": "사내 계정 발급", "status": "in-progress", "parent": "workplace" },
+        { "key": "laptop", "title": "노트북 설정", "status": "todo", "parent": "workplace" },
+        { "key": "schedule", "title": "첫 주 일정표 작성", "status": "in-progress" },
+        { "key": "training", "title": "필수 교육 신청", "status": "todo" },
+        { "key": "mail", "title": "첫날 안내 메일 발송", "status": "todo" },
+        { "key": "welcome", "title": "첫 출근 맞이", "status": "todo" },
+        { "key": "review", "title": "수습 평가 계획", "status": "todo" }
+      ],
+      "dependencies": [
+        ["offer", "papers"],
+        ["papers", "workplace"],
+        ["papers", "training"],
+        ["mentor", "schedule"],
+        ["account", "laptop"],
+        ["workplace", "mail"],
+        ["schedule", "mail"],
+        ["training", "mail"],
+        ["mail", "welcome"]
+      ]
+    }
+  ]
+}

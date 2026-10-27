@@ -75,7 +75,7 @@ sudo bash install.sh --domain <도메인> --branch claude/zealous-ride-imn72j
 
 브라우저에서 `https://<도메인>`을 엽니다. 로그인 창이 뜨면 사용자 이름은 비우거나 아무거나 쓰고, 비밀번호를 넣습니다. 처음 몇 분은 인증서를 받는 중이라 접속이 안 될 수 있습니다.
 
-예시 프로젝트를 넣어 보려면 서버에서:
+예시 프로젝트를 넣어 보려면 서버에서(체험 모드가 아닐 때):
 
 ```sh
 sudo bash -c 'set -a && . /etc/tevro/tevro.env && cd /opt/tevro && node scripts/demo.ts'
@@ -95,11 +95,26 @@ node src/cli/main.ts project list
 
 비밀번호가 없거나 틀리면 종료 코드 4로 끝납니다.
 
+## 7. 체험 서버로 쓰기
+
+심사위원이나 동료가 비밀번호 없이 직접 조작해 보게 하려면 체험 모드로 엽니다.
+
+```sh
+sudo bash /opt/tevro/deploy/oracle/install.sh --trial
+```
+
+- 비밀번호 없이 열립니다. 화면 위 안내 띠에서 예시 데이터(개발자용·일반직용)를 고릅니다.
+- 바꾼 내용은 각자의 브라우저 창에만 남습니다. 새로고침해도 유지되고, 창을 닫았다 다시 열면 처음 데이터로 돌아갑니다. 서버의 데이터 파일(`tevro.db`)은 쓰지도 바꾸지도 않습니다.
+- 예시 데이터는 저장소의 `trial/*.json`입니다([형식](../../trial/README.md)). 바꾼 뒤 저장소에 올리고 설치 스크립트를 인자 없이 다시 실행하면 반영됩니다. 이때 열려 있던 창의 사본도 처음 상태로 돌아갑니다.
+- 끄기: `sudo bash /opt/tevro/deploy/oracle/install.sh --no-trial`. 보통 서버로 돌아가며, 전에 쓰던 비밀번호와 데이터 파일을 그대로 씁니다.
+- 체험 서버에는 CLI로 접속할 수 없습니다. 2시간 동안 안 쓴 창의 사본은 지워지고, 그 창은 다시 열 때처럼 처음 상태로 시작합니다.
+
 ## 운영
 
 | 할 일 | 방법 |
 | --- | --- |
-| 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·비밀번호를 그대로 씀) |
+| 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·비밀번호·체험 모드를 그대로 씀) |
+| 체험 모드 켜기·끄기 | 같은 명령에 `--trial` 또는 `--no-trial`. 한 번 정하면 이후 갱신에도 유지됩니다(7장) |
 | 도메인 바꾸기 | 새 도메인의 DNS를 서버 공인 IP로 건 뒤 `sudo bash /opt/tevro/deploy/oracle/install.sh --domain <새 도메인>`. 이후 갱신에도 새 도메인이 쓰이고, 예전 도메인으로는 더는 열리지 않습니다. 데이터와 비밀번호는 그대로입니다 |
 | 비밀번호 바꾸기 | `/etc/tevro/tevro.env`의 `TEVRO_PASSWORD`를 고친 뒤 `sudo systemctl restart tevro`. 12자 이상, 영문·숫자와 `. _ ~ ! @ % ^ * + = : , -`만 |
 | 상태·로그 | `systemctl status tevro`, `journalctl -u tevro -f`, 인증서는 `journalctl -u caddy -f` |

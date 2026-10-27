@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { startServer, type TestServer } from './helpers.ts';
+import { createTrial, loadTemplates } from '../src/server/trial.ts';
+import { startServer, startTrialServer, type TestServer } from './helpers.ts';
 
 const CLI = resolve(import.meta.dirname, '../src/cli/main.ts');
 
@@ -111,6 +112,19 @@ describe('CLI 비밀번호', () => {
       assert.deepEqual(JSON.parse(ok.stdout).data, []);
     } finally {
       await locked.close();
+    }
+  });
+});
+
+describe('CLI 체험 서버', () => {
+  it('체험 서버(TEVRO_TRIAL=1)는 웹 화면에서만 쓸 수 있다고 알리고 종료 코드 1로 끝난다', async () => {
+    const trialServer = await startTrialServer(createTrial(loadTemplates(resolve(import.meta.dirname, '../trial'))));
+    try {
+      const result = await tevro(['project', 'list'], trialServer.origin);
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /체험 서버는 웹 화면에서만 쓸 수 있습니다/);
+    } finally {
+      await trialServer.close();
     }
   });
 });

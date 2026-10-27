@@ -12,6 +12,7 @@ const TITLES: Record<ErrorCode, string> = {
   HAS_DEPENDENCIES: '연결이 남은 공정 이동',
   NOT_FOUND: '대상 없음',
   UNAUTHORIZED: '인증 필요',
+  TRIAL_SESSION_REQUIRED: '체험 창 정보 없음',
   INTERNAL: '서버 오류',
 };
 

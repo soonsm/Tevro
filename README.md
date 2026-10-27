@@ -35,7 +35,7 @@ npm run build   # 웹 화면 빌드
 npm start       # http://localhost:4000
 ```
 
-예시 프로젝트(공정 12개, 그중 '애플리케이션 개발' 아래 하위 공정 3개, 연결 10개)를 만들려면 서버를 켠 채로 다른 터미널에서 실행합니다. CLI로 데이터를 넣으므로 에이전트가 쓰는 흐름도 함께 볼 수 있습니다.
+예시 프로젝트(공정 12개, 그중 '애플리케이션 개발' 아래 하위 공정 3개, 연결 10개)를 만들려면 서버를 켠 채로 다른 터미널에서 실행합니다. CLI로 데이터를 넣으므로 에이전트가 쓰는 흐름도 함께 볼 수 있습니다. 데이터는 체험 모드와 같은 [`trial/developer.json`](trial/README.md)입니다(일반직용: `npm run demo -- general`).
 
 ```sh
 npm run demo
@@ -48,8 +48,19 @@ npm run demo
 | `TEVRO_DATA_DIR` | `./data` | SQLite 파일을 둘 폴더 |
 | `TEVRO_SERVER` | `http://localhost:4000` | CLI가 접속할 서버 |
 | `TEVRO_PASSWORD` | 없음 | 서버: 설정하면 모든 접속에 이 비밀번호를 요구(12자 이상, 브라우저는 기본 로그인 창). CLI: 이 값으로 접속 |
+| `TEVRO_TRIAL` | 없음 | `1`이면 체험 모드(아래). 데이터 파일과 비밀번호를 쓰지 않음 |
 
 첫 버전으로 만든 `data/tevro.db`는 서버가 시작할 때 계층을 담을 수 있게 자동으로 올립니다(기존 공정은 모두 최상위가 됨). 올리기 전 파일은 같은 폴더에 `tevro.db.schema1-….bak`으로 남습니다. 자세한 내용은 [`Tevro/db-schema.md`](Tevro/db-schema.md) 7장에 있습니다.
+
+### 체험 모드
+
+심사·시연처럼 여러 사람이 직접 조작해 보게 할 때 씁니다. `TEVRO_TRIAL=1 npm start`로 켭니다.
+
+- 비밀번호 없이 열립니다. 서버를 켤 때 [`trial/`](trial/README.md)의 예시 데이터를 메모리에 원본으로 만들고, 브라우저 창마다 그 사본을 줍니다.
+- 창에서 바꾼 내용은 그 사본에만 남습니다. 새로고침해도 유지되고, 창을 닫았다 다시 열면 처음 데이터로 돌아갑니다. 다른 사람의 창에는 영향이 없습니다.
+- 화면 위 안내 띠의 버튼으로 예시 데이터(개발자용·일반직용)를 바꿉니다. 지금 것을 다시 누르면 처음 상태로 돌아갑니다. 바꾼 내용이 있으면 먼저 확인합니다.
+- 2시간 동안 안 쓴 사본은 지우고(그 창은 다음 요청 때 처음 상태로 다시 시작), 사본은 동시에 500개까지만 둡니다(하나에 약 0.35MB).
+- CLI는 쓸 수 없습니다(창이 없으므로 '웹 화면에서만 쓸 수 있습니다'로 끝남). 서버를 다시 켜면 모든 사본이 처음 상태로 돌아갑니다.
 
 ## CLI
 
@@ -82,7 +93,7 @@ node src/cli/main.ts task move <공정 ID> --top --detach --yes                 
 
 ## 인터넷에 올리기
 
-Oracle Cloud 무료 가상 서버에 올리는 스크립트와 안내가 [`deploy/oracle/`](deploy/oracle/README.md)에 있습니다. 서버에서 명령 두 줄로 Node.js·Caddy 설치, 빌드, systemd 서비스, HTTPS 인증서, 방화벽 설정까지 끝납니다. 정식 로그인 전까지는 임시 공용 비밀번호로 막습니다.
+Oracle Cloud 무료 가상 서버에 올리는 스크립트와 안내가 [`deploy/oracle/`](deploy/oracle/README.md)에 있습니다. 서버에서 명령 두 줄로 Node.js·Caddy 설치, 빌드, systemd 서비스, HTTPS 인증서, 방화벽 설정까지 끝납니다. 정식 로그인 전까지는 임시 공용 비밀번호로 막습니다. 체험 서버로 열려면 `--trial`을 붙입니다.
 
 ## 확인 시나리오
 
@@ -121,8 +132,9 @@ npm run typecheck  # TypeScript 검사
 | `src/server` | HTTP API(`/api/v1`)와 SQLite 저장. 모든 쓰기는 한 트랜잭션 안에서 검증한 뒤 저장 |
 | `src/web` | React + React Flow 화면. 빌드 결과(`dist/web`)를 서버가 함께 제공 |
 | `src/cli` | Commander.js CLI |
-| `scripts` | `demo`(예시 데이터), `dev`(개발 서버) |
+| `scripts` | `demo`(예시 데이터를 CLI로 넣기), `dev`(개발 서버) |
+| `trial` | 체험 모드와 `npm run demo`가 쓰는 예시 데이터(JSON)와 형식 안내 |
 | `deploy/oracle` | Oracle Cloud 설치 스크립트와 안내 |
-| `test` | `node:test` 테스트(도메인 규칙, API, CLI, 스키마 마이그레이션) |
+| `test` | `node:test` 테스트(도메인 규칙, API, CLI, 스키마 마이그레이션, 선 배치, 체험 모드) |
 | `Tevro/` | 요구사항·결정 기록 문서(Obsidian) |
 | `Tevro/db-schema.md` | 테이블 설계서(ERD, 컬럼 설명, 제약) |

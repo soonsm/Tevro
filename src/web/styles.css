@@ -61,6 +61,72 @@ code {
   flex-direction: column;
 }
 
+/* 체험 모드 안내 띠(TEVRO_TRIAL=1) */
+.trial-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 7px 20px;
+  background: #eaf1ff;
+  border-bottom: 1px solid #bcd0fb;
+  color: #173a8a;
+  font-size: 13px;
+}
+
+.trial-bar > .icon {
+  color: var(--doing-fg);
+}
+
+.trial-bar__text {
+  flex: 1 1 320px;
+  min-width: 0;
+  margin: 0;
+}
+
+.trial-bar__text strong {
+  margin-right: 8px;
+}
+
+.trial-bar__choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.trial-bar__label {
+  margin-right: 2px;
+  font-weight: 600;
+}
+
+.trial-choice {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #bcd0fb;
+  border-radius: 8px;
+  background: var(--surface);
+  color: #173a8a;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.trial-choice:hover {
+  border-color: var(--doing-fg);
+}
+
+.trial-choice[aria-pressed='true'] {
+  border-color: var(--doing-fg);
+  background: var(--doing-fg);
+  color: #fff;
+}
+
+.trial-choice:focus-visible {
+  outline: 2px solid var(--doing-fg);
+  outline-offset: 2px;
+}
+
 .topbar {
   display: flex;
   flex-wrap: wrap;

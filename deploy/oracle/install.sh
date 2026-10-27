@@ -4,12 +4,14 @@
 # 처음 설치(가상 서버에서):
 #   curl -fsSLO https://raw.githubusercontent.com/soonsm/Tevro/refs/heads/<브랜치>/deploy/oracle/install.sh
 #   sudo bash install.sh --domain <도메인> --branch <브랜치>
-# 갱신(처음 설치한 도메인·브랜치를 그대로 씀):
+# 갱신(처음 설치한 도메인·브랜치·체험 모드를 그대로 씀):
 #   sudo bash /opt/tevro/deploy/oracle/install.sh
+# 체험 서버로 쓰기(비밀번호 없이, 브라우저 창마다 trial/*.json 예시 데이터의 사본): --trial, 끄기: --no-trial
 #
 # 하는 일: Node.js 22와 Caddy 설치 → tevro 사용자·폴더 → 코드 받기·빌드 → systemd 서비스 →
 #          Caddy로 HTTPS(Let's Encrypt 인증서 자동) → Oracle Ubuntu 이미지 방화벽(iptables)에 80·443 열기.
 # 접속 비밀번호는 처음 설치할 때 만들어 /etc/tevro/tevro.env에 둔다. 직접 정하려면 TEVRO_PASSWORD로 넘긴다.
+# 체험 모드에서는 비밀번호를 쓰지 않는다(파일에는 남겨 두어, 체험 모드를 끄면 다시 쓰인다).
 # 자세한 안내: deploy/oracle/README.md
 set -euo pipefail
 
@@ -33,9 +35,12 @@ fail() {
 
 usage() {
   cat <<'EOF'
-사용법: sudo bash install.sh --domain <도메인> [--branch <브랜치>]
-  --domain  Tevro를 열 주소. 이 서버의 공인 IP를 가리키는 도메인(예: tevro.example.com, myname.duckdns.org)
-  --branch  설치할 Git 브랜치(기본: main)
+사용법: sudo bash install.sh --domain <도메인> [--branch <브랜치>] [--trial | --no-trial]
+  --domain    Tevro를 열 주소. 이 서버의 공인 IP를 가리키는 도메인(예: tevro.example.com, myname.duckdns.org)
+  --branch    설치할 Git 브랜치(기본: main)
+  --trial     체험 서버로 연다. 비밀번호 없이 누구나 조작할 수 있고, 바꾼 내용은 각자의 브라우저 창에만 남는다
+              (창을 닫으면 처음 데이터로). 예시 데이터는 저장소의 trial/*.json
+  --no-trial  체험 모드를 끄고 보통 서버(비밀번호, 데이터 파일)로 되돌린다
 처음 설치한 뒤에는 인자 없이 다시 실행하면 같은 설정으로 최신 코드를 받아 다시 시작합니다.
 비밀번호를 직접 정하려면: sudo TEVRO_PASSWORD='12자 이상' bash install.sh ...
 EOF
@@ -171,11 +176,13 @@ wait_for_server() {
 }
 
 main() {
-  local domain="" branch=""
+  local domain="" branch="" trial=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --domain) domain="${2:?--domain 값이 없습니다}"; shift 2 ;;
       --branch) branch="${2:?--branch 값이 없습니다}"; shift 2 ;;
+      --trial) trial=1; shift ;;
+      --no-trial) trial=0; shift ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; fail "모르는 옵션: $1" ;;
     esac
@@ -192,8 +199,11 @@ main() {
     . "$INSTALL_CONF"
     domain="${domain:-${TEVRO_DOMAIN:-}}"
     branch="${branch:-${TEVRO_BRANCH:-}}"
+    trial="${trial:-${TEVRO_TRIAL:-}}"
   fi
   branch="${branch:-main}"
+  trial="${trial:-0}"
+  [[ "$trial" =~ ^[01]$ ]] || fail "$INSTALL_CONF 의 TEVRO_TRIAL은 0 또는 1이어야 합니다: $trial"
   [ -n "$domain" ] || { usage >&2; fail "--domain을 지정하세요."; }
   [[ "$domain" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || fail "도메인 형식이 아닙니다: $domain"
   [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "브랜치 이름 형식이 아닙니다: $branch"
@@ -252,10 +262,11 @@ PORT=$PORT
 HOST=127.0.0.1
 TEVRO_DATA_DIR=$DATA_DIR
 TEVRO_PASSWORD=$password
+TEVRO_TRIAL=$trial
 EOF
   )
   chmod 600 "$ENV_FILE"
-  printf 'TEVRO_DOMAIN=%s\nTEVRO_BRANCH=%s\n' "$domain" "$branch" >"$INSTALL_CONF"
+  printf 'TEVRO_DOMAIN=%s\nTEVRO_BRANCH=%s\nTEVRO_TRIAL=%s\n' "$domain" "$branch" "$trial" >"$INSTALL_CONF"
   write_service
   wait_for_server
 
@@ -269,12 +280,18 @@ EOF
 
   printf '\n설치를 마쳤습니다.\n'
   printf '  주소      https://%s\n' "$domain"
-  case "$origin" in
-    generated) printf '  비밀번호  %s   (사용자 이름은 비우거나 아무거나. 지금 적어 두세요)\n' "$password" ;;
-    given) printf '  비밀번호  TEVRO_PASSWORD로 넘긴 값\n' ;;
-    kept) printf '  비밀번호  그대로 유지(%s 의 TEVRO_PASSWORD)\n' "$ENV_FILE" ;;
-  esac
-  printf '  데이터    %s/tevro.db\n' "$DATA_DIR"
+  if [ "$trial" = 1 ]; then
+    printf '  체험 모드 켜짐. 비밀번호 없이 열리고, 바꾼 내용은 각자의 브라우저 창에만 남습니다\n'
+    printf '  예시 데이터 %s/trial/*.json (저장소에서 바꾼 뒤 이 스크립트를 다시 실행하면 반영)\n' "$APP_DIR"
+    printf '  체험 모드 끄기 sudo bash %s/deploy/oracle/install.sh --no-trial\n' "$APP_DIR"
+  else
+    case "$origin" in
+      generated) printf '  비밀번호  %s   (사용자 이름은 비우거나 아무거나. 지금 적어 두세요)\n' "$password" ;;
+      given) printf '  비밀번호  TEVRO_PASSWORD로 넘긴 값\n' ;;
+      kept) printf '  비밀번호  그대로 유지(%s 의 TEVRO_PASSWORD)\n' "$ENV_FILE" ;;
+    esac
+    printf '  데이터    %s/tevro.db\n' "$DATA_DIR"
+  fi
   printf '  상태·로그 systemctl status tevro / journalctl -u tevro -f\n'
   printf '\nHTTPS 인증서는 아래 두 가지가 맞으면 Caddy가 몇 분 안에 자동으로 받습니다(journalctl -u caddy -f).\n'
   printf '  1. Oracle 콘솔에서 이 서버 서브넷의 보안 목록에 TCP 80·443 수신 규칙이 있다\n'

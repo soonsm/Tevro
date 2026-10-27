@@ -1,13 +1,14 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { STATUS_LABELS, TRANSITION_LABELS, type Edge, type Summary } from '../shared/domain.ts';
-import type { AutoTransition, GraphDto, ProjectDto, TaskDto, TaskInput } from '../shared/types.ts';
+import type { AutoTransition, GraphDto, ProjectDto, TaskDto, TaskInput, TrialStatus } from '../shared/types.ts';
 import { ApiFailure, api } from './api.ts';
-import { DeleteTaskDialog, MoveTaskDialog, NewProjectDialog } from './dialogs.tsx';
+import { DeleteTaskDialog, MoveTaskDialog, NewProjectDialog, SwitchDatasetDialog } from './dialogs.tsx';
 import { GraphCanvas } from './GraphCanvas.tsx';
 import { AlertIcon, CloseIcon, InfoIcon, LayoutIcon, PlusIcon, RefreshIcon, StatusChip } from './icons.tsx';
 import { LevelBar } from './LevelBar.tsx';
 import { SidePanel } from './SidePanel.tsx';
+import { TrialBanner } from './TrialBanner.tsx';
 
 export type Selection = { kind: 'task'; id: string } | { kind: 'edge'; from: string; to: string } | null;
 
@@ -23,6 +24,7 @@ type Dialog =
   | { kind: 'new-project' }
   | { kind: 'delete-task'; task: TaskDto }
   | { kind: 'move-task'; task: TaskDto }
+  | { kind: 'switch-dataset'; dataset: string; label: string }
   | null;
 
 function transitionText(transitions: AutoTransition[]): string {
@@ -39,11 +41,15 @@ export function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [layoutRequest, setLayoutRequest] = useState(0);
+  /** 체험 서버일 때만 있다 */
+  const [trial, setTrial] = useState<TrialStatus | null>(null);
   const currentProject = useRef<string | null>(null);
   // 주소의 층(?level=)은 처음 연 프로젝트에만 쓴다.
   const initialLevel = useRef(new URLSearchParams(location.search).get('level'));
 
   useEffect(() => {
+    // 체험 서버가 아니면 null이라 안내 띠를 그리지 않는다.
+    api.trialStatus().then(setTrial, () => setTrial(null));
     void loadProjects();
   }, []);
 
@@ -203,6 +209,43 @@ export function App() {
     }
   }
 
+  /** 체험 모드: 고른 예시 데이터를 처음 상태로 불러온다. 이 창에서 바꾼 내용이 있으면 먼저 확인한다. */
+  async function chooseDataset(dataset: string) {
+    const label = trial?.datasets.find((item) => item.key === dataset)?.label ?? dataset;
+    try {
+      const status = await api.trialStatus();
+      setTrial(status);
+      if (status?.dirty) {
+        setDialog({ kind: 'switch-dataset', dataset, label });
+        return;
+      }
+    } catch (error) {
+      showError('예시 데이터를 불러오지 못했습니다', error);
+      return;
+    }
+    await switchDataset(dataset);
+  }
+
+  async function switchDataset(dataset: string) {
+    setDialog(null);
+    try {
+      const status = await api.resetTrial(dataset);
+      const list = await api.listProjects();
+      setTrial(status);
+      setProjects(list);
+      setNotice(null);
+      setSelection(null);
+      setLevelId(null);
+      setLayoutRequest((count) => count + 1);
+      // 같은 예시를 다시 불러오면 프로젝트 ID가 그대로라 보던 프로젝트에 남는다.
+      const target = list.find((item) => item.id === currentProject.current)?.id ?? list[0]?.id ?? null;
+      if (target === currentProject.current) await reloadGraph();
+      else setProjectId(target);
+    } catch (error) {
+      showError('예시 데이터를 불러오지 못했습니다', error);
+    }
+  }
+
   async function refresh() {
     await loadProjects();
     await reloadGraph();
@@ -213,6 +256,7 @@ export function App() {
 
   return (
     <div className="app">
+      {trial && <TrialBanner trial={trial} onChoose={(dataset) => void chooseDataset(dataset)} />}
       <header className="topbar">
         <span className="brand">Tevro</span>
         {projects && projects.length > 0 && (
@@ -330,6 +374,13 @@ export function App() {
       )}
 
       {dialog?.kind === 'new-project' && <NewProjectDialog onCancel={() => setDialog(null)} onCreate={createProject} />}
+      {dialog?.kind === 'switch-dataset' && (
+        <SwitchDatasetDialog
+          label={dialog.label}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => void switchDataset(dialog.dataset)}
+        />
+      )}
       {dialog?.kind === 'delete-task' && graph && (
         <DeleteTaskDialog
           task={dialog.task}

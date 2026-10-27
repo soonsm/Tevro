@@ -164,6 +164,26 @@ export function MoveTaskDialog({ task, graph, onCancel, onConfirm }: MoveTaskDia
   );
 }
 
+/** 체험 모드: 이 창에서 바꾼 내용이 있을 때, 예시 데이터를 새로 불러오기 전에 확인한다. */
+export function SwitchDatasetDialog({ label, onCancel, onConfirm }: { label: string; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <Modal labelledBy="switch-dataset-title" onClose={onCancel}>
+      <h2 id="switch-dataset-title" className="modal__title">
+        예시 데이터를 새로 불러올까요?
+      </h2>
+      <p className="panel-note">‘{label}’의 처음 상태로 바뀌고, 이 창에서 바꾼 내용은 사라집니다.</p>
+      <div className="modal__actions">
+        <button type="button" className="button" onClick={onCancel} autoFocus>
+          취소
+        </button>
+        <button type="button" className="button primary" onClick={onConfirm}>
+          불러오기
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function NewProjectDialog({ onCancel, onCreate }: { onCancel: () => void; onCreate: (name: string) => void }) {
   const [name, setName] = useState('');
   return (

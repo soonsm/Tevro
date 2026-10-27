@@ -108,7 +108,16 @@ export type ErrorCode =
   | 'HAS_DEPENDENCIES'
   | 'NOT_FOUND'
   | 'UNAUTHORIZED'
+  | 'TRIAL_SESSION_REQUIRED'
   | 'INTERNAL';
+
+/** 체험 모드(TEVRO_TRIAL=1): 고를 수 있는 예시 데이터와 이 창이 쓰는 것 */
+export interface TrialStatus {
+  datasets: { key: string; label: string }[];
+  dataset: string;
+  /** 이 창에서 데이터를 바꾼 적이 있는지. 예시 데이터를 다시 불러오기 전에 확인한다 */
+  dirty: boolean;
+}
 
 /** 오류 응답(application/problem+json). 오류 종류에 따라 아래 확장 멤버가 붙는다. */
 export interface Problem {
