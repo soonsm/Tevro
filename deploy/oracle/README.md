@@ -103,6 +103,13 @@ node src/cli/main.ts project list
 sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 ```
 
+> 체험 모드가 생기기 전(2026-10-27 이전)에 설치한 서버는 `/opt/tevro`에 있는 설치 스크립트가 옛 버전이라 `모르는 옵션: --trial`로 멈춥니다. 스크립트는 실행된 뒤에 최신 코드를 받기 때문입니다. 먼저 인자 없이 한 번 실행해 최신 스크립트를 받은 뒤 `--trial`을 붙여 다시 실행하세요.
+>
+> ```sh
+> sudo bash /opt/tevro/deploy/oracle/install.sh
+> sudo bash /opt/tevro/deploy/oracle/install.sh --trial
+> ```
+
 - 비밀번호 없이 열립니다. 화면 위 안내 띠에서 예시 데이터(개발자용·일반직용)를 고릅니다.
 - 바꾼 내용은 각자의 브라우저 창에만 남습니다. 새로고침해도 유지되고, 창을 닫았다 다시 열면 처음 데이터로 돌아갑니다. 서버의 데이터 파일(`tevro.db`)은 쓰지도 바꾸지도 않습니다.
 - 예시 데이터는 저장소의 `trial/*.json`입니다([형식](../../trial/README.md)). 바꾼 뒤 저장소에 올리고 설치 스크립트를 인자 없이 다시 실행하면 반영됩니다. 이때 열려 있던 창의 사본도 처음 상태로 돌아갑니다.
