@@ -103,7 +103,7 @@ node src/cli/main.ts project list
 sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 ```
 
-> 체험 모드가 생기기 전(2026-10-27 이전)에 설치한 서버는 `/opt/tevro`에 있는 설치 스크립트가 옛 버전이라 `모르는 옵션: --trial`로 멈춥니다. 스크립트는 실행된 뒤에 최신 코드를 받기 때문입니다. 먼저 인자 없이 한 번 실행해 최신 스크립트를 받은 뒤 `--trial`을 붙여 다시 실행하세요.
+> 2026-10-27 이전에 설치한 서버는 `/opt/tevro`에 있는 설치 스크립트가 옛 버전이라 `모르는 옵션: --trial`로 멈춥니다. 처음 한 번만 인자 없이 실행해 최신 스크립트를 받은 뒤 `--trial`을 붙여 다시 실행하세요. 그 뒤로는 스크립트가 실행될 때마다 옵션을 보기 전에 먼저 최신 버전을 받아 다시 실행하므로, 새 옵션도 바로 쓸 수 있습니다.
 >
 > ```sh
 > sudo bash /opt/tevro/deploy/oracle/install.sh
@@ -120,7 +120,7 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 
 | 할 일 | 방법 |
 | --- | --- |
-| 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·비밀번호·체험 모드를 그대로 씀) |
+| 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·비밀번호·체험 모드를 그대로 씀). 스크립트도 먼저 최신으로 받아 그것으로 실행합니다 |
 | 체험 모드 켜기·끄기 | 같은 명령에 `--trial` 또는 `--no-trial`. 한 번 정하면 이후 갱신에도 유지됩니다(7장) |
 | 도메인 바꾸기 | 새 도메인의 DNS를 서버 공인 IP로 건 뒤 `sudo bash /opt/tevro/deploy/oracle/install.sh --domain <새 도메인>`. 이후 갱신에도 새 도메인이 쓰이고, 예전 도메인으로는 더는 열리지 않습니다. 데이터와 비밀번호는 그대로입니다 |
 | 비밀번호 바꾸기 | `/etc/tevro/tevro.env`의 `TEVRO_PASSWORD`를 고친 뒤 `sudo systemctl restart tevro`. 12자 이상, 영문·숫자와 `. _ ~ ! @ % ^ * + = : , -`만 |

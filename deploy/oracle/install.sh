@@ -6,6 +6,7 @@
 #   sudo bash install.sh --domain <도메인> --branch <브랜치>
 # 갱신(처음 설치한 도메인·브랜치·체험 모드를 그대로 씀):
 #   sudo bash /opt/tevro/deploy/oracle/install.sh
+#   이미 설치된 서버에서는 옵션을 보기 전에 최신 코드를 받아 새 스크립트로 다시 실행하므로, 새 옵션도 바로 쓸 수 있다.
 # 체험 서버로 쓰기(비밀번호 없이, 브라우저 창마다 trial/*.json 예시 데이터의 사본): --trial, 끄기: --no-trial
 #
 # 하는 일: Node.js 22와 Caddy 설치 → tevro 사용자·폴더 → 코드 받기·빌드 → systemd 서비스 →
@@ -48,6 +49,32 @@ EOF
 
 # tevro 사용자로 실행한다. runuser는 HOME을 바꾸지 않으므로 직접 넘긴다(npm 캐시 위치).
 as_tevro() { runuser -u tevro -- env HOME="$TEVRO_HOME" "$@"; }
+
+# /opt/tevro에 있는 이 스크립트는 지난번 설치 때 받은 버전이라 새 옵션이나 바뀐 설치 단계를 모를 수 있다.
+# 이미 설치된 서버면 옵션을 보기 전에 최신 코드를 받고, 받은 새 스크립트로 한 번 다시 실행한다.
+update_self() {
+  if [ -n "${TEVRO_INSTALLER_UPDATED:-}" ] || [ "$(id -u)" -ne 0 ] || [ ! -d "$APP_DIR/.git" ]; then
+    return 0
+  fi
+  local branch="" previous="" arg
+  for arg in "$@"; do
+    # --branch로 브랜치를 바꾸는 경우에는 그 브랜치에서 받는다.
+    if [ "$previous" = --branch ]; then branch="$arg"; fi
+    previous="$arg"
+  done
+  if [ -z "$branch" ] && [ -f "$INSTALL_CONF" ]; then
+    branch="$(sed -n 's/^TEVRO_BRANCH=//p' "$INSTALL_CONF")"
+  fi
+  branch="${branch:-main}"
+  [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || return 0
+  log "설치 스크립트를 최신으로 받기: $branch"
+  if as_tevro git -C "$APP_DIR" fetch --quiet --depth 1 origin "$branch" &&
+    as_tevro git -C "$APP_DIR" reset --quiet --hard FETCH_HEAD &&
+    [ -f "$APP_DIR/deploy/oracle/install.sh" ]; then
+    exec env TEVRO_INSTALLER_UPDATED=1 bash "$APP_DIR/deploy/oracle/install.sh" "$@"
+  fi
+  warn "최신 설치 스크립트를 받지 못해 지금 버전으로 계속합니다."
+}
 
 node_ok() {
   command -v node >/dev/null 2>&1 &&
@@ -176,6 +203,7 @@ wait_for_server() {
 }
 
 main() {
+  update_self "$@"
   local domain="" branch="" trial=""
   while [ $# -gt 0 ]; do
     case "$1" in
