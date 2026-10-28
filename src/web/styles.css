@@ -160,16 +160,16 @@ code {
   color: var(--bar-text);
 }
 
-.topbar .summary .chip.status-todo .icon {
-  color: var(--bar-muted);
+.topbar .summary .chip.status-todo {
+  --dot: var(--bar-muted);
 }
 
-.topbar .summary .chip.status-in-progress .icon {
-  color: #8fb0ff;
+.topbar .summary .chip.status-in-progress {
+  --dot: #8fb0ff;
 }
 
-.topbar .summary .chip.status-done .icon {
-  color: #7fd3a4;
+.topbar .summary .chip.status-done {
+  --dot: #7fd3a4;
 }
 
 .topbar .select,
@@ -514,11 +514,11 @@ textarea.input {
   outline-offset: 2px;
 }
 
-/* 상태 표기: 상자 없이 상태 아이콘(색·모양)과 글자 */
+/* 상태 표기: 상자 없이 색 점과 글자 */
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   height: 22px;
   font-size: 12px;
   font-weight: 600;
@@ -526,20 +526,30 @@ textarea.input {
   white-space: nowrap;
 }
 
-.chip.status-todo .icon {
-  color: #9aa1ad;
+.chip[class*='status-'] > .icon {
+  display: none;
+}
+
+.chip[class*='status-']::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dot);
 }
 
 .chip.status-todo {
+  --dot: #b4bac4;
   color: var(--muted);
 }
 
-.chip.status-in-progress .icon {
-  color: var(--doing-fg);
+.chip.status-in-progress {
+  --dot: var(--doing-fg);
 }
 
-.chip.status-done .icon {
-  color: var(--done-fg);
+.chip.status-done {
+  --dot: var(--done-fg);
 }
 
 .chip.is-met {
