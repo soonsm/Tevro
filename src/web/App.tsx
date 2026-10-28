@@ -252,6 +252,20 @@ export function App() {
   }
 
   const levelTask = levelId ? graph?.tasks.find((task) => task.id === levelId) : undefined;
+
+  // 하위 층에서 Esc를 누르면 위 층으로 돌아간다(입력 중이거나 대화상자가 열려 있을 때는 제외).
+  const levelParent = levelTask ? levelTask.parentId : undefined;
+  const levelOwner = levelTask?.id;
+  useEffect(() => {
+    if (!levelOwner || dialog) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if ((event.target as HTMLElement | null)?.closest('input, textarea, select, dialog')) return;
+      openLevel(levelParent ?? null, levelOwner);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [levelOwner, levelParent, dialog, openLevel]);
   const levelTaskCount = graph ? graph.tasks.filter((task) => task.parentId === (levelTask ? levelTask.id : null)).length : 0;
 
   return (
@@ -321,16 +335,16 @@ export function App() {
               onAdd={addTask}
               onArrange={() => setLayoutRequest((count) => count + 1)}
             />
-            {levelTask && (
-              <LevelBar
-                graph={graph}
-                levelId={levelTask.id}
-                onOpenLevel={openLevel}
-                onShowTask={(id) => setSelection({ kind: 'task', id })}
-                onFocusTask={focusTask}
-              />
-            )}
-            <div className="canvas">
+            <div className={`canvas${levelTask ? ' has-levelbar' : ''}`}>
+              {levelTask && (
+                <LevelBar
+                  graph={graph}
+                  levelId={levelTask.id}
+                  onOpenLevel={openLevel}
+                  onShowTask={(id) => setSelection({ kind: 'task', id })}
+                  onFocusTask={focusTask}
+                />
+              )}
               <ReactFlowProvider>
                 <GraphCanvas
                   graph={graph}

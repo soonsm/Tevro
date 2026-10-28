@@ -257,20 +257,41 @@ code {
   background: var(--bg);
 }
 
-/* 하위 층의 위치(경로)와 물려받는 선행 */
+/* 하위 층: 그래프 위 가운데에 떠 있는 한 줄(경로, 상위 공정 상태, 물려받는 선행, 위 층으로) */
 .levelbar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  z-index: 6;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  overflow-x: auto;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 20px;
-  padding: 8px 16px;
-  background: #fbfbfc;
-  border-bottom: 1px solid var(--line);
+  gap: 12px;
+  padding: 6px 6px 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.12);
+  white-space: nowrap;
+}
+
+.levelbar > * {
+  flex: none;
+}
+
+.levelbar__back {
+  border-radius: 999px;
+}
+
+.canvas.has-levelbar .notice {
+  top: 64px;
 }
 
 .breadcrumb ol {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
   margin: 0;
@@ -292,6 +313,7 @@ code {
 
 .crumb {
   max-width: 240px;
+  white-space: nowrap;
   padding: 4px 6px;
   border: none;
   border-radius: 6px;
@@ -311,6 +333,7 @@ code {
 }
 
 .crumb.is-current {
+  max-width: none;
   font-size: 15px;
   font-weight: 800;
   color: var(--text);
@@ -328,14 +351,16 @@ code {
 
 .levelbar__inherited {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
   align-items: center;
   gap: 6px 10px;
 }
 
 .levelbar__inherited ul {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px 12px;
   margin: 0;
   padding: 0;

@@ -121,7 +121,7 @@ function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props[
           <li>공정 추가: 위 입력란에 제목을 쓰고 Enter</li>
           <li>연결: 카드 오른쪽 끝을 끌어 다른 카드에 놓기</li>
           <li>연결 삭제: 연결선을 고르고 Delete</li>
-          <li>하위 공정: 카드의 ‘열기’나 두 번 누르기로 들어가고, 위쪽 경로로 돌아오기</li>
+          <li>하위 공정: 카드의 ‘열기’나 두 번 누르기로 들어가고, 위에 뜬 줄의 ← 버튼이나 Esc로 돌아오기</li>
           <li>하위 공정이 모두 완료되면 상위 공정이 자동으로 완료됩니다</li>
           <li>선행 조건이 갖춰지지 않아도 상태 변경은 막지 않습니다</li>
         </ul>

@@ -14,12 +14,16 @@ interface Props {
   onFocusTask: (taskId: string) => void;
 }
 
-/** 하위 층에 들어갔을 때의 위치(경로)와, 이 층의 공정 모두가 물려받는 선행 공정(F-H04, F-H07). */
+/**
+ * 하위 층에 들어갔을 때 그래프 위 가운데에 떠 있는 한 줄(F-H04, F-H07): 경로, 상위 공정의 상태·진행, 이 층 전체가 물려받는 선행,
+ * 위 층으로 돌아가는 버튼(Esc도 같음). 줄바꿈하지 않고, 길면 옆으로 늘어난다.
+ */
 export function LevelBar({ graph, levelId, onOpenLevel, onShowTask, onFocusTask }: Props) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
   const owner = byId.get(levelId);
   if (!owner) return null;
   const chain = ancestorIds(graph.tasks, levelId).reverse(); // 최상위 쪽부터
+  const parentTitle = owner.parentId ? byId.get(owner.parentId)?.title : graph.project.name;
   // 이 층 공정들이 물려받는 선행 = 상위 공정의 직접 선행 + 상위 공정이 물려받은 선행
   const inherited: InheritedPredecessor[] = [
     ...owner.predecessorIds.map((taskId) => ({ taskId, inheritedFrom: owner.id })),
@@ -53,14 +57,14 @@ export function LevelBar({ graph, levelId, onOpenLevel, onShowTask, onFocusTask 
             >
               {owner.title}
             </button>
-            <StatusChip status={owner.status} />
-            <span className="levelbar__count" title="완료된 하위 공정 / 전체 하위 공정">
-              <StackIcon />
-              하위 {owner.doneChildCount}/{owner.childCount}
-            </span>
           </li>
         </ol>
       </nav>
+      <StatusChip status={owner.status} />
+      <span className="levelbar__count" title="완료된 하위 공정 / 전체 하위 공정">
+        <StackIcon />
+        {owner.doneChildCount}/{owner.childCount}
+      </span>
       {inherited.length > 0 && (
         <div className="levelbar__inherited">
           <span className="field-label">이 층 전체의 선행</span>
@@ -85,6 +89,14 @@ export function LevelBar({ graph, levelId, onOpenLevel, onShowTask, onFocusTask 
           </ul>
         </div>
       )}
+      <button
+        type="button"
+        className="button primary small levelbar__back"
+        title="위 층으로 돌아갑니다 (Esc)"
+        onClick={() => onOpenLevel(owner.parentId, owner.id)}
+      >
+        ← {parentTitle}
+      </button>
     </div>
   );
 }
