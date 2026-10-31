@@ -266,67 +266,76 @@ interface ManagerProps {
   onDelete: (template: TemplateSummaryDto) => void;
 }
 
-/** 템플릿 관리: 회사 템플릿과 내 템플릿을 나눠 보고, 열기·복사·삭제한다. */
+/** 템플릿 관리: 회사 템플릿과 내 템플릿을 탭으로 나눠 보고, 열기·복사·삭제한다. */
 export function TemplatesDialog({ templates, user, currentProject, onClose, onOpen, onNew, onSaveProject, onCopy, onDelete }: ManagerProps) {
   const { company, mine, others } = groupTemplates(templates, user);
-  const sections = [
-    { title: '회사 템플릿', hint: '모든 사람이 보고 씁니다. 관리자만 고칩니다.', items: company, empty: '회사 템플릿이 없습니다.' },
-    { title: '내 템플릿', hint: '나만 보고 고칩니다.', items: mine, empty: '내 템플릿이 없습니다. 새로 만들거나 회사 템플릿을 복사해 고쳐 쓰세요.' },
-    ...(others.length > 0 ? [{ title: '다른 사람의 템플릿', hint: '관리자에게만 보입니다.', items: others, empty: '' }] : []),
+  const tabs = [
+    { key: 'company', title: '회사 템플릿', hint: '모든 사람이 보고 씁니다. 관리자만 고칩니다.', items: company, empty: '회사 템플릿이 없습니다.' },
+    { key: 'mine', title: '내 템플릿', hint: '나만 보고 고칩니다.', items: mine, empty: '내 템플릿이 없습니다. 새로 만들거나 회사 템플릿을 복사해 고쳐 쓰세요.' },
+    ...(others.length > 0 ? [{ key: 'others', title: '다른 사람의 템플릿', hint: '관리자에게만 보입니다.', items: others, empty: '' }] : []),
   ];
+  const [active, setActive] = useState(company.length === 0 && mine.length > 0 ? 'mine' : 'company');
+  const tab = tabs.find((item) => item.key === active) ?? tabs[0];
   return (
     <Modal labelledBy="templates-title" onClose={onClose} wide>
       <h2 id="templates-title" className="modal__title">
         템플릿
       </h2>
-      <div className="button-row">
-        <button type="button" className="button" onClick={onNew}>
-          <PlusIcon />새 템플릿
-        </button>
-        {currentProject && (
-          <button type="button" className="button" onClick={onSaveProject}>
-            ‘{currentProject.name}’을 템플릿으로 저장
+      <div className="template-manager__top">
+        <div className="segmented-tabs" role="tablist" aria-label="템플릿 구분">
+          {tabs.map((item) => (
+            <button key={item.key} type="button" role="tab" aria-selected={item.key === tab.key} onClick={() => setActive(item.key)}>
+              {item.title} {item.items.length}
+            </button>
+          ))}
+        </div>
+        <div className="button-row">
+          <button type="button" className="button" onClick={onNew}>
+            <PlusIcon />새 템플릿
           </button>
-        )}
+          {currentProject && (
+            <button type="button" className="button" onClick={onSaveProject} title={`‘${currentProject.name}’의 공정과 연결을 템플릿으로 저장합니다`}>
+              지금 프로젝트를 템플릿으로 저장
+            </button>
+          )}
+        </div>
       </div>
-      {sections.map((section) => (
-        <section key={section.title} className="modal__block">
-          <div className="template-section__head">
-            <span className="field-label is-strong">
-              {section.title} {section.items.length}
-            </span>
-            <span className="panel-note is-small">{section.hint}</span>
-          </div>
-          {section.items.length === 0 ? (
-            <p className="panel-note">{section.empty}</p>
-          ) : (
-            <ul className="template-rows">
-              {section.items.map((item) => (
-                <li key={item.id}>
-                  <div className="template-rows__main">
-                    <b>{item.name}</b>
-                    <span className="panel-note is-small">
-                      {meta(item)} · 이 템플릿으로 만든 프로젝트 {item.usedBy}개
-                      {section.title === '다른 사람의 템플릿' && item.template.ownerName ? ` · ${item.template.ownerName}` : ''}
-                    </span>
-                  </div>
+      <section className="modal__block" role="tabpanel" aria-label={tab.title}>
+        <p className="panel-note is-small">{tab.hint}</p>
+        {tab.items.length === 0 ? (
+          <p className="panel-note">{tab.empty}</p>
+        ) : (
+          <ul className="template-rows">
+            {tab.items.map((item) => (
+              <li key={item.id}>
+                <div className="template-rows__main">
+                  <b>{item.name}</b>
+                  <span className="panel-note is-small">
+                    {meta(item)} · 이 템플릿으로 만든 프로젝트 {item.usedBy}개
+                    {tab.key === 'others' && item.template.ownerName ? ` · ${item.template.ownerName}` : ''}
+                  </span>
+                </div>
+                {/* 줄마다 버튼 수가 달라도 같은 자리에 오도록 칸을 고정한다(삭제가 없으면 빈 칸) */}
+                <div className="template-rows__actions">
                   <button type="button" className="button small" onClick={() => onOpen(item.id)}>
                     {item.canEdit ? '열어서 고치기' : '열어 보기'}
                   </button>
                   <button type="button" className="button small" onClick={() => onCopy(item)}>
                     내 템플릿으로 복사
                   </button>
-                  {item.canEdit && (
+                  {item.canEdit ? (
                     <button type="button" className="button small danger" onClick={() => onDelete(item)}>
                       삭제
                     </button>
+                  ) : (
+                    <span aria-hidden="true" />
                   )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <div className="modal__actions">
         <button type="button" className="button" onClick={onClose}>
           닫기
