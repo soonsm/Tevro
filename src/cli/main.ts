@@ -11,6 +11,8 @@ import {
   TRANSITION_LABELS,
   ancestorIds,
   brokenPaths,
+  isOverdue,
+  localToday,
   descendantIds,
   hasPrerequisites,
   summarize,
@@ -28,6 +30,7 @@ import type {
   ProjectDto,
   TaskChangeResult,
   TaskDto,
+  PersonDto,
   TemplateSummaryDto,
 } from '../shared/types.ts';
 
@@ -202,10 +205,13 @@ task
   .addOption(new Option('--status <status>', '실행 상태').choices(TASK_STATUSES))
   .option('--jira-url <url>', 'Jira 이슈 주소')
   .option('--confluence-url <url>', 'Confluence 문서 주소')
+  .option('--deadline <YYYY-MM-DD>', '기한(날짜)')
+  .option('--assignee <user>', '담당자의 아이디 또는 사용자 ID (tevro people로 확인)')
   .option('--parent <task-id>', '상위 공정 ID (생략하면 최상위)')
   .action(async (options: TaskOptions & { project: string; parent?: string }, command: Command) => {
-    const result = await client(command).post<TaskChangeResult>(`/api/v1/projects/${segment(options.project)}/tasks`, {
-      ...taskInput(options),
+    const api = client(command);
+    const result = await api.post<TaskChangeResult>(`/api/v1/projects/${segment(options.project)}/tasks`, {
+      ...(await taskInput(options, api)),
       parentId: options.parent,
     });
     emit(command, result, () =>
@@ -215,18 +221,21 @@ task
 
 task
   .command('update')
-  .description('공정 내용·링크 수정 (링크에 빈 값을 주면 지움)')
+  .description('공정 내용·링크·기한·담당자 수정 (빈 값을 주면 지움)')
   .argument('<task-id>', '공정 ID')
   .option('--title <title>', '제목')
   .option('--description <text>', '설명')
   .option('--jira-url <url>', 'Jira 이슈 주소')
   .option('--confluence-url <url>', 'Confluence 문서 주소')
+  .option('--deadline <YYYY-MM-DD>', '기한(날짜). 빈 값이면 지움')
+  .option('--assignee <user>', '담당자의 아이디 또는 사용자 ID. 빈 값이면 지움')
   .action(async (taskId: string, options: TaskOptions, command: Command) => {
-    const input = taskInput(options);
+    const api = client(command);
+    const input = await taskInput(options, api);
     if (Object.keys(input).length === 0) {
       throw new CliFailure(EXIT.usage, { code: 'USAGE', detail: '바꿀 값을 하나 이상 지정하세요. (tevro task update --help)' });
     }
-    const result = await client(command).patch<TaskChangeResult>(`/api/v1/tasks/${segment(taskId)}`, input);
+    const result = await api.patch<TaskChangeResult>(`/api/v1/tasks/${segment(taskId)}`, input);
     emit(command, result, () => `공정을 고쳤습니다: ${result.task.title} (${result.task.id})`);
   });
 
@@ -381,6 +390,16 @@ graph
     emit(command, result, () => graphText(result, full, options.root));
   });
 
+program
+  .command('people')
+  .description('담당자로 지정할 수 있는 사람(활성 사용자)')
+  .action(async (_options, command: Command) => {
+    const people = await client(command).get<PersonDto[]>('/api/v1/people');
+    emit(command, people, () =>
+      people.length === 0 ? '사용자가 없습니다.' : table([['이름', '아이디', 'ID'], ...people.map((item) => [item.displayName, item.username, item.id])]),
+    );
+  });
+
 const template = program
   .command('template')
   .description('템플릿(회사 템플릿·내 템플릿). 템플릿 안의 공정·연결은 task·dependency 명령에 템플릿 ID를 --project로 넣어 고침');
@@ -516,6 +535,8 @@ interface TaskOptions {
   status?: TaskDto['status'];
   jiraUrl?: string;
   confluenceUrl?: string;
+  deadline?: string;
+  assignee?: string;
 }
 
 interface DependencyOptions {
@@ -668,11 +689,21 @@ function segment(id: string): string {
   return encodeURIComponent(id);
 }
 
-function taskInput(options: TaskOptions): Record<string, string> {
+async function taskInput(options: TaskOptions, api: Client): Promise<Record<string, string>> {
   const input: Record<string, string> = {};
-  for (const key of ['title', 'description', 'status', 'jiraUrl', 'confluenceUrl'] as const) {
+  for (const key of ['title', 'description', 'status', 'jiraUrl', 'confluenceUrl', 'deadline'] as const) {
     const value = options[key];
     if (value !== undefined) input[key] = value;
+  }
+  // 담당자는 아이디(username)로도 받는다. 서버에는 사용자 ID로 보낸다.
+  if (options.assignee !== undefined) {
+    const wanted = options.assignee.trim();
+    if (wanted === '' || wanted.startsWith('usr_')) input.assigneeId = wanted;
+    else {
+      const person = (await api.get<PersonDto[]>('/api/v1/people')).find((item) => item.username.toLowerCase() === wanted.toLowerCase());
+      if (!person) throw new CliFailure(EXIT.validation, { code: 'VALIDATION_INPUT', detail: `담당자로 지정할 사용자가 없습니다: ${wanted} (tevro people로 확인)` });
+      input.assigneeId = person.id;
+    }
   }
   return input;
 }
@@ -698,6 +729,7 @@ function levelOf(graph: GraphDto, rootId: string): GraphDto {
     tasks,
     dependencies: graph.dependencies.filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
     summary: summarize(graph.tasks.filter((item) => subtree.has(item.id))),
+    positions: Object.fromEntries(Object.entries(graph.positions).filter(([id]) => ids.has(id))),
   };
 }
 
@@ -724,12 +756,18 @@ function prerequisiteText(item: TaskDto, titles: Map<string, string>): string {
 /** 공정 표. 하위 공정은 상위 아래에 들여 쓰고, 상위에는 하위 완료 수를 붙인다. */
 function taskTable(graph: GraphDto, tasks: TaskDto[] = graph.tasks): string {
   const titles = titleMap(graph);
+  // 기한·담당자가 하나라도 있을 때만 그 열을 보인다.
+  const extra = tasks.some((item) => item.deadline || item.assigneeId);
+  const today = localToday();
   return table([
-    ['상태', '공정', 'ID', '선행 조건'],
+    ['상태', '공정', 'ID', ...(extra ? ['기한', '담당'] : []), '선행 조건'],
     ...treeOrder(tasks).map(({ task: item, depth }) => [
       STATUS_LABELS[item.status],
       `${'  '.repeat(depth)}${item.title}${item.childCount > 0 ? ` (하위 ${item.doneChildCount}/${item.childCount})` : ''}`,
       item.id,
+      ...(extra
+        ? [item.deadline ? `${item.deadline}${isOverdue(item, today) ? ' 지연' : ''}` : '-', item.assigneeName ?? '-']
+        : []),
       prerequisiteText(item, titles),
     ]),
   ]);
@@ -780,6 +818,8 @@ function taskDetail(item: TaskDto, graph: GraphDto): string {
     ...(item.parentId ? [['물려받은 선행', inherited.length === 0 ? '없음' : inherited.join(', ')]] : []),
     ['후속 공정', named(item.successorIds)],
     ['하위 공정', item.childCount === 0 ? '없음' : `${item.doneChildCount}/${item.childCount} 완료 — ${named(children)}`],
+    ['기한', item.deadline ? `${item.deadline}${isOverdue(item, localToday()) ? ' (지연)' : ''}` : '-'],
+    ['담당', item.assigneeName ?? '-'],
     ['Jira', item.jiraUrl ? `${item.jiraKey ?? ''} ${item.jiraUrl}`.trim() : '-'],
     ['Confluence', item.confluenceUrl ?? '-'],
     ['설명', item.description === '' ? '-' : item.description.replace(/\n/g, '\n' + ' '.repeat(18))],

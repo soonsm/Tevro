@@ -16,6 +16,8 @@
   - 상태별 개수와 남은 공정은 말단 공정(하위가 없는 공정) 기준
 - 그래프: 연결 없는 공정까지 모두 표시, 자동 배치, 고른 공정의 앞뒤 경로 강조, 상태별 개수
 - Jira 이슈·Confluence 문서 링크(공정당 각 1개, 링크만 저장)
+- 기한·담당자: 공정마다 기한(날짜)과 담당자(Tevro 사용자). 기한이 지난 공정은 '지연'으로 표시하고, 남은 공정을 기한 순으로 보며 '내가 맡은 일'만 거를 수 있음. 상위보다 늦은 하위 기한은 막지 않고 알림
+- 카드 위치 저장: 끌어서 옮긴 자리를 저장해 모두가 같은 위치를 봄. [자동 정렬]은 그 층의 저장 위치를 지우고 다시 배치
 - 템플릿: 회사 템플릿(관리자가 관리, 모두 사용)과 내 템플릿(만든 사람만). 빈 템플릿 만들기, 프로젝트·템플릿을 복사해 템플릿으로 저장, 템플릿으로 새 프로젝트 만들기(진행 상태 초기화, Jira 링크 비움, Confluence 링크 복사), 출처(템플릿 이름·판) 기록. 아래 '템플릿'
 - 로그인과 권한: 사용자 계정(열람자·편집자·관리자), 웹 세션, CLI·AI 에이전트용 개인 액세스 토큰(read·read-write, 만료일). 첫 관리자는 서버 관리 명령으로(아래 '로그인과 권한')
 - CLI: 화면과 같은 서버 API를 쓰고 `--json` 출력 제공
@@ -23,7 +25,7 @@
 
 ## 아직 넣지 않은 것
 
-사내 계정(LDAP·SSO) 로그인, Jira 연동(이슈 생성·상태 가져오기), 데드라인·담당자, 변경 묶음·dry-run·동시 수정 충돌 감지, 프로젝트 삭제, 여러 층을 한 화면에 펼쳐 보기, 폐쇄망 설치 패키지. ADR의 결정은 그대로 두고 구현만 미뤘습니다.
+사내 계정(LDAP·SSO) 로그인, Jira 연동(이슈 생성·스프린트·상태 반영, `Tevro/company-checklist.md`), 상대 기한(템플릿), 변경 묶음·dry-run·동시 수정 충돌 감지, 프로젝트 삭제, 여러 층을 한 화면에 펼쳐 보기, 폐쇄망 설치 패키지. ADR의 결정은 그대로 두고 구현만 미뤘습니다.
 
 > 서버는 기본적으로 이 컴퓨터(localhost)에서만 접속됩니다. 다른 PC에서 쓰거나 인터넷에 올릴 때는 HTTPS 프록시 뒤에 둡니다(아래 '인터넷에 올리기').
 
@@ -109,6 +111,8 @@ node src/cli/main.ts task add --project <프로젝트 ID> --title "CI 구성" --
 node src/cli/main.ts dependency add --from <선행 공정 ID> --to <후속 공정 ID>
 node src/cli/main.ts task status <공정 ID> --set done
 node src/cli/main.ts task update <공정 ID> --jira-url https://jira.example.com/browse/ABC-1
+node src/cli/main.ts task update <공정 ID> --deadline 2026-11-30 --assignee kim   # 빈 값('')이면 지움
+node src/cli/main.ts people                                                       # 담당자로 지정할 수 있는 사람
 node src/cli/main.ts task delete <공정 ID>         # 영향(하위 공정·연결)만 보여 줌
 node src/cli/main.ts task delete <공정 ID> --yes   # 실제 삭제
 

@@ -1,7 +1,7 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { STATUS_LABELS, TRANSITION_LABELS, type Edge, type Summary } from '../shared/domain.ts';
-import type { AutoTransition, GraphDto, ProjectDto, TaskDto, TaskInput, TemplateSummaryDto, TrialStatus, UserDto } from '../shared/types.ts';
+import { STATUS_LABELS, TRANSITION_LABELS, isOverdue, localToday, type Edge, type Summary } from '../shared/domain.ts';
+import type { AutoTransition, GraphDto, PersonDto, ProjectDto, TaskDto, TaskInput, TemplateSummaryDto, TrialStatus, UserDto } from '../shared/types.ts';
 import { AccountMenu, LoginScreen } from './account.tsx';
 import { ApiFailure, api, whenSessionEnds } from './api.ts';
 import { DeleteTaskDialog, MoveTaskDialog, SwitchDatasetDialog } from './dialogs.tsx';
@@ -113,6 +113,8 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
   const readOnly = user?.role === 'viewer';
   const [projects, setProjects] = useState<ProjectDto[] | null>(null);
   const [templates, setTemplates] = useState<TemplateSummaryDto[]>([]);
+  /** 담당자로 고를 수 있는 사람. 체험 모드(계정 없음)면 비어 있다 */
+  const [people, setPeople] = useState<PersonDto[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [graph, setGraph] = useState<GraphDto | null>(null);
   /** 보고 있는 층의 상위 공정. null이면 최상위 층(F-H07: 한 번에 한 층) */
@@ -130,6 +132,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
   useEffect(() => {
     // 체험 서버가 아니면 null이라 안내 띠를 그리지 않는다.
     api.trialStatus().then(setTrial, () => setTrial(null));
+    if (user) api.listPeople().then(setPeople, () => setPeople([]));
     void loadProjects();
   }, []);
 
@@ -361,6 +364,32 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
     }
   }
 
+  /** 끌어서 옮긴 카드 위치를 저장한다. 모두가 같은 위치를 본다. 실패해도 화면의 위치는 그대로 둔다. */
+  async function savePositions(positions: { taskId: string; x: number; y: number }[]) {
+    const id = currentProject.current;
+    if (!id) return;
+    try {
+      await api.savePositions(id, { set: positions });
+    } catch (error) {
+      showError('카드 위치를 저장하지 못했습니다', error);
+    }
+  }
+
+  /** 자동 정렬: 이 층에 저장한 위치를 지우고 다시 배치한다. 고칠 수 없는 화면이면 내 화면에서만 다시 배치한다. */
+  async function arrange() {
+    const id = currentProject.current;
+    const saved = graph ? graph.tasks.filter((task) => task.parentId === levelId && graph.positions[task.id]).map((task) => task.id) : [];
+    if (id && !graphReadOnly && saved.length > 0) {
+      try {
+        await api.savePositions(id, { clear: saved });
+        await reloadGraph();
+      } catch (error) {
+        showError('자동 정렬하지 못했습니다', error);
+      }
+    }
+    setLayoutRequest((count) => count + 1);
+  }
+
   async function refresh() {
     await loadProjects();
     await reloadGraph();
@@ -456,7 +485,10 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
                 </span>
               </div>
             ) : (
-              <SummaryChips summary={graph.summary} />
+              <SummaryChips
+                summary={graph.summary}
+                overdue={graph.tasks.filter((task) => task.childCount === 0 && isOverdue(task, localToday())).length}
+              />
             ))}
           <button type="button" className="button" title="다른 사람이나 CLI가 바꾼 내용을 불러옵니다" onClick={refresh}>
             <RefreshIcon />
@@ -528,7 +560,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
               readOnlyReason={readOnlyReason}
               levelTitle={levelTask?.title ?? null}
               onAdd={addTask}
-              onArrange={() => setLayoutRequest((count) => count + 1)}
+              onArrange={() => void arrange()}
             />
             <div className={`canvas${levelTask ? ' has-levelbar' : ''}`}>
               {levelTask && (
@@ -552,6 +584,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
                   onConnect={addDependency}
                   onDeleteEdge={removeDependency}
                   readOnly={graphReadOnly}
+                  onMoveNodes={graphReadOnly ? undefined : (positions) => void savePositions(positions)}
                 />
               </ReactFlowProvider>
               {levelTaskCount === 0 && (
@@ -578,6 +611,8 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
             onDeleteTask={(task) => setDialog({ kind: 'delete-task', task })}
             onDeleteEdge={removeDependency}
             readOnly={graphReadOnly}
+            people={people}
+            meId={user?.id ?? null}
           />
         </div>
         </>
@@ -679,7 +714,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
   );
 }
 
-function SummaryChips({ summary }: { summary: Summary }) {
+function SummaryChips({ summary, overdue }: { summary: Summary; overdue: number }) {
   return (
     <div className="summary" title="말단 공정(하위 공정이 없는 공정) 기준">
       <span>
@@ -688,6 +723,7 @@ function SummaryChips({ summary }: { summary: Summary }) {
       <StatusChip status="todo">미착수 {summary.todo}</StatusChip>
       <StatusChip status="in-progress">진행 중 {summary.inProgress}</StatusChip>
       <StatusChip status="done">완료 {summary.done}</StatusChip>
+      {overdue > 0 && <span className="overdue-chip">지연 {overdue}</span>}
     </div>
   );
 }

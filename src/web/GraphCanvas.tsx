@@ -19,7 +19,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { INCONSISTENCY_LABELS, hasPrerequisites, reachable, type Edge } from '../shared/domain.ts';
+import { INCONSISTENCY_LABELS, hasPrerequisites, isOverdue, localToday, reachable, type Edge } from '../shared/domain.ts';
 import type { GraphDto, TaskDto } from '../shared/types.ts';
 import { CheckIcon, ChevronRightIcon, DocIcon, StackIcon, StatusChip, WarnIcon } from './icons.tsx';
 import { NODE_HEIGHT, PARENT_NODE_HEIGHT, edgeKey, layoutGraph, roundedPath, routePoints, type Layout, type Point, type Route } from './layout.ts';
@@ -87,9 +87,16 @@ interface Props {
   onDeleteEdge: (edge: Edge) => void;
   /** 열람자: 연결을 만들거나 지울 수 없다 */
   readOnly?: boolean;
+  /** 카드를 끌어 놓았을 때. 바꿀 수 있는 사람이면 위치를 저장한다 */
+  onMoveNodes?: (positions: { taskId: string; x: number; y: number }[]) => void;
 }
 
-export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, onSelect, onOpen, onConnect, onDeleteEdge, readOnly = false }: Props) {
+// 기한이나 담당자가 있는 카드는 그 줄만큼 높다.
+const META_HEIGHT = 20;
+const hasMeta = (task: TaskDto) => task.deadline !== null || task.assigneeId !== null;
+const nodeHeight = (task: TaskDto) => (task.childCount > 0 ? PARENT_NODE_HEIGHT : NODE_HEIGHT) + (hasMeta(task) ? META_HEIGHT : 0);
+
+export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, onSelect, onOpen, onConnect, onDeleteEdge, readOnly = false, onMoveNodes }: Props) {
   const { fitView } = useReactFlow();
   const [nodes, setNodes] = useState<TaskNodeType[]>([]);
   const [layout, setLayout] = useState<Layout | null>(null);
@@ -109,21 +116,21 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
       [
         graph.project.id,
         levelId ?? '',
-        level.tasks.map((task) => `${task.id}${task.childCount > 0 ? '+' : ''}`).join(','),
+        level.tasks.map((task) => `${task.id}${task.childCount > 0 ? '+' : ''}${hasMeta(task) ? 'm' : ''}`).join(','),
         level.dependencies.map(edgeKey).join(','),
       ].join('|'),
     [graph.project.id, levelId, level],
   );
 
   // 층을 옮기거나, 공정·연결이 바뀌거나, '자동 정렬'을 누르면 다시 배치한다. 상태·제목만 바뀌면 위치를 그대로 둔다.
-  // 위치는 저장하지 않으므로 끌어서 옮긴 자리도 다음 배치 때 다시 정렬된다.
+  // 사람이 끌어서 저장한 위치(graph.positions)가 있는 카드는 그 자리에 둔다. '자동 정렬'은 저장한 위치를 지운 뒤 부른다.
   useEffect(() => {
     const key = `${structure}#${layoutRequest}`;
     const relayout = key !== layoutKey.current;
     layoutKey.current = key;
     const next = relayout
       ? layoutGraph(
-          level.tasks.map((task) => ({ id: task.id, height: task.childCount > 0 ? PARENT_NODE_HEIGHT : NODE_HEIGHT })),
+          level.tasks.map((task) => ({ id: task.id, height: nodeHeight(task) })),
           level.dependencies,
         )
       : null;
@@ -132,11 +139,12 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
       const byId = new Map(previous.map((node) => [node.id, node]));
       return level.tasks.map((task): TaskNodeType => {
         const old = byId.get(task.id);
-        const position = next?.positions.get(task.id) ?? old?.position ?? { x: 0, y: 0 };
+        const position = next ? (graph.positions[task.id] ?? next.positions.get(task.id)!) : (old?.position ?? { x: 0, y: 0 });
         return old ? { ...old, position, data: { task } } : { id: task.id, type: 'task', position, data: { task } };
       });
     });
     if (relayout) void fitView(FIT_VIEW);
+    // graph.positions는 배치할 때만 읽는다(저장 직후 다시 읽어 와도 카드를 움직이지 않게).
   }, [level, structure, layoutRequest, fitView]);
 
   // React Flow의 선택 표시를 패널의 선택과 맞춘다(키보드 삭제가 엉뚱한 대상을 잡지 않게).
@@ -214,6 +222,9 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))}
+        onNodeDragStop={(_, node, dragged) =>
+          onMoveNodes?.((dragged.length > 0 ? dragged : [node]).map((item) => ({ taskId: item.id, x: item.position.x, y: item.position.y })))
+        }
         onNodeClick={(_, node) => onSelect({ kind: 'task', id: node.id })}
         // 하위가 없는 카드는 두 번 눌러도 빈 층으로 들어가지 않는다. 첫 하위는 패널의 '하위 공정 추가'로 만든다.
         onNodeDoubleClick={(_, node) => node.data.task.childCount > 0 && onOpen(node.id)}
@@ -260,8 +271,12 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
           : 'dimmed'
         : 'normal';
   const parent = task.childCount > 0;
+  const overdue = !view.template && isOverdue(task, localToday());
   return (
-    <div className={`task-node is-${emphasis}${parent ? ' is-parent' : ''}`} title={task.title}>
+    <div
+      className={`task-node is-${emphasis}${parent ? ' is-parent' : ''}${hasMeta(task) ? ' has-meta' : ''}${overdue ? ' is-overdue' : ''}`}
+      title={task.title}
+    >
       <Handle type="target" position={Position.Left} />
       <div className="task-node__top">
         {view.template ? <span className="task-node__kind">템플릿 공정</span> : <StatusChip status={task.status} />}
@@ -274,6 +289,17 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
       </div>
       <div className="task-node__title">{task.title}</div>
       {!view.template && <PrerequisiteLine task={task} titles={view.titles} />}
+      {hasMeta(task) && (
+        <div className="task-node__meta">
+          {task.deadline && (
+            <span className={`task-node__deadline${overdue ? ' is-overdue' : ''}`} title={`기한 ${task.deadline}${overdue ? ' (지연)' : ''}`}>
+              {overdue ? '지연 ' : '~'}
+              {task.deadline.slice(5).replace('-', '/')}
+            </span>
+          )}
+          {task.assigneeName && <span className="task-node__assignee">{task.assigneeName}</span>}
+        </div>
+      )}
       {parent && (
         <div className="task-node__children">
           <span

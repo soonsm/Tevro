@@ -136,6 +136,14 @@ export function createApp({ store, accounts, trial, webRoot }: AppOptions): Serv
       return { body: r.store.deleteTask(r.params.taskId) };
     }),
 
+    // 카드 위치: 바꿀 수 있는 사람만 저장한다(열람자는 끌어도 자기 화면에서만 옮겨진다).
+    route('PUT', '/api/v1/projects/:projectId/positions', 'own', (r) => {
+      edit(r, r.params.projectId);
+      return { body: r.store.savePositions(r.params.projectId, r.body) };
+    }),
+    // 담당자로 고를 수 있는 사람. 이름과 아이디만 준다(역할·로그인 기록은 관리자 화면에서만).
+    route('GET', '/api/v1/people', 'read', ({ store }) => ({ body: store.listPeople() })),
+
     // 템플릿(F-T01~F-T10). 회사 템플릿(official)은 모두가 보고 관리자만 바꾸며, 개인 템플릿은 만든 사람만 보고 바꾼다(관리자는 모두).
     route('GET', '/api/v1/templates', 'read', ({ store, actor }) => ({
       body: store

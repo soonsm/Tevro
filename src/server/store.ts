@@ -27,6 +27,7 @@ import type {
   ProjectDto,
   TaskChangeResult,
   TaskDto,
+  PersonDto,
   TemplateSummaryDto,
 } from '../shared/types.ts';
 import { ApiError, invalidInput } from './errors.ts';
@@ -42,8 +43,26 @@ type Input = Record<string, unknown>;
  * 2: 공정 계층(tasks.parent_id)
  * 3: 사용자·로그인 수단·세션·개인 액세스 토큰(ADR-0004)
  * 4: 템플릿(projects.kind 등)과 프로젝트의 템플릿 출처
+ * 5: 공정의 기한·담당자, 저장한 카드 위치
  */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
+
+// 기한은 날짜만(YYYY-MM-DD). 담당자는 Tevro 사용자이고, 사용자를 지우는 일은 없지만 지워지면 담당자만 비운다.
+// 카드 위치는 모두가 같은 위치를 본다. 공정이 지워지면 함께 지워진다. '자동 정렬'은 그 층의 위치를 지운다.
+const TASK_EXTRAS = `
+ALTER TABLE tasks ADD COLUMN deadline TEXT;
+ALTER TABLE tasks ADD COLUMN assignee_user_id TEXT REFERENCES users (id) ON DELETE SET NULL;
+CREATE INDEX tasks_by_assignee ON tasks (assignee_user_id);
+CREATE TABLE task_positions (
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL PRIMARY KEY,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id, task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE
+);
+CREATE INDEX task_positions_by_project ON task_positions (project_id);
+`;
 
 // 템플릿은 공정·연결 테이블을 그대로 쓰도록 projects의 한 종류(kind = 'template')로 둔다. 그래프 편집과 검증이 프로젝트와 같다(F-T03).
 // 출처(source_*)는 템플릿을 지워도 남게 외래 키 없이 이름·판까지 복사해 둔다(F-T09, AC-22).
@@ -144,7 +163,7 @@ CREATE TABLE dependencies (
   FOREIGN KEY (project_id, from_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE,
   FOREIGN KEY (project_id, to_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE
 );
-${ACCOUNT_TABLES}${TEMPLATE_COLUMNS}`;
+${ACCOUNT_TABLES}${TEMPLATE_COLUMNS}${TASK_EXTRAS}`;
 
 /** 예전 DB를 한 단계씩 올리는 SQL. 키는 올린 뒤의 버전이다. 한 번 배포한 단계는 고치지 않고 새 단계를 더한다. */
 const MIGRATIONS: Record<number, string> = {
@@ -174,6 +193,7 @@ CREATE INDEX tasks_by_parent ON tasks (project_id, parent_id);
 `,
   3: ACCOUNT_TABLES,
   4: TEMPLATE_COLUMNS,
+  5: TASK_EXTRAS,
 };
 
 const MAX_LENGTH = { name: 100, title: 200, description: 10_000, url: 2_000, id: 64 };
@@ -211,6 +231,8 @@ interface TaskRow {
   status: TaskStatus;
   jira_url: string | null;
   confluence_url: string | null;
+  deadline: string | null;
+  assignee_user_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -312,13 +334,23 @@ export function createStore(db: Db) {
     listTasks: db.prepare<[string], TaskRow>('SELECT * FROM tasks WHERE project_id = ? ORDER BY rowid'),
     getTask: db.prepare<[string], TaskRow>('SELECT * FROM tasks WHERE id = ?'),
     insertTask: db.prepare<[TaskRow]>(
-      `INSERT INTO tasks (id, project_id, parent_id, title, description, status, jira_url, confluence_url, created_at, updated_at)
-       VALUES (@id, @project_id, @parent_id, @title, @description, @status, @jira_url, @confluence_url, @created_at, @updated_at)`,
+      `INSERT INTO tasks (id, project_id, parent_id, title, description, status, jira_url, confluence_url, deadline, assignee_user_id, created_at, updated_at)
+       VALUES (@id, @project_id, @parent_id, @title, @description, @status, @jira_url, @confluence_url, @deadline, @assignee_user_id, @created_at, @updated_at)`,
     ),
     updateTask: db.prepare<[TaskRow]>(
       `UPDATE tasks SET title = @title, description = @description, status = @status, jira_url = @jira_url,
-       confluence_url = @confluence_url, updated_at = @updated_at WHERE id = @id`,
+       confluence_url = @confluence_url, deadline = @deadline, assignee_user_id = @assignee_user_id, updated_at = @updated_at WHERE id = @id`,
     ),
+    people: db.prepare<[], { id: string; username: string; display_name: string }>(
+      'SELECT id, username, display_name FROM users WHERE active = 1 ORDER BY display_name COLLATE NOCASE, username',
+    ),
+    personName: db.prepare<[string], { display_name: string; active: number }>('SELECT display_name, active FROM users WHERE id = ?'),
+    listPositions: db.prepare<[string], { task_id: string; x: number; y: number }>('SELECT task_id, x, y FROM task_positions WHERE project_id = ?'),
+    upsertPosition: db.prepare<[string, string, number, number, string]>(
+      `INSERT INTO task_positions (project_id, task_id, x, y, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (task_id) DO UPDATE SET x = excluded.x, y = excluded.y, updated_at = excluded.updated_at`,
+    ),
+    deletePosition: db.prepare<[string, string]>('DELETE FROM task_positions WHERE project_id = ? AND task_id = ?'),
     setParent: db.prepare<[string | null, string, string]>('UPDATE tasks SET parent_id = ?, updated_at = ? WHERE id = ?'),
     setStatus: db.prepare<[TaskStatus, string, string]>('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?'),
     deleteTask: db.prepare<[string]>('DELETE FROM tasks WHERE id = ?'),
@@ -377,6 +409,14 @@ export function createStore(db: Db) {
     if (input.jiraUrl !== undefined && input.jiraUrl !== null && input.jiraUrl !== '') {
       throw invalidInput('템플릿에는 Jira 링크를 넣지 않습니다. 이슈는 프로젝트마다 다르므로 프로젝트를 만든 뒤 연결하세요.');
     }
+    for (const [key, label] of [
+      ['deadline', '기한'],
+      ['assigneeId', '담당자'],
+    ] as const) {
+      if (input[key] !== undefined && input[key] !== null && input[key] !== '') {
+        throw invalidInput(`템플릿에는 ${label}를 넣지 않습니다. 프로젝트마다 다르므로 템플릿으로 프로젝트를 만든 뒤 정하세요.`);
+      }
+    }
   }
 
   /**
@@ -403,11 +443,15 @@ export function createStore(db: Db) {
         status: 'todo',
         jira_url: null,
         confluence_url: row.confluence_url,
+        deadline: null,
+        assignee_user_id: null,
         created_at: now,
         updated_at: now,
       });
     }
     for (const edge of dependenciesOf(fromId)) sql.insertDependency.run(toId, ids.get(edge.from)!, ids.get(edge.to)!, now);
+    // 사람이 정리해 둔 카드 위치도 함께 가져간다(기한·담당자는 가져가지 않음).
+    for (const position of sql.listPositions.all(fromId)) sql.upsertPosition.run(toId, ids.get(position.task_id)!, position.x, position.y, now);
     return rows.length;
   }
 
@@ -460,12 +504,26 @@ export function createStore(db: Db) {
     const dependencies = dependenciesOf(project.id);
     const prerequisites = analyzePrerequisites(tasks, dependencies);
     const hierarchy = analyzeHierarchy(tasks);
+    const names = new Map(sql.people.all().map((person) => [person.id, person.display_name]));
+    const nameOf = (id: string | null) => (id ? (names.get(id) ?? sql.personName.get(id)?.display_name ?? null) : null);
     return {
       project: dto(project),
-      tasks: rows.map((row) => toTaskDto(row, prerequisites.get(row.id)!, hierarchy.get(row.id)!)),
+      tasks: rows.map((row) => toTaskDto(row, prerequisites.get(row.id)!, hierarchy.get(row.id)!, nameOf(row.assignee_user_id))),
       dependencies,
       summary: summarize(tasks),
+      positions: Object.fromEntries(sql.listPositions.all(project.id).map((row) => [row.task_id, { x: row.x, y: row.y }])),
     };
+  }
+
+  /** 담당자로 지정할 사용자. 없거나 비활성이면 거부한다. */
+  function readAssignee(value: unknown): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    const id = readText(value, '담당자(assigneeId)', MAX_LENGTH.id, { required: true, trim: true });
+    const person = sql.personName.get(id);
+    if (!person) throw invalidInput(`담당자로 지정할 사용자가 없습니다: ${id}`);
+    if (person.active !== 1) throw invalidInput(`비활성화된 사용자는 담당자로 지정할 수 없습니다: ${person.display_name}`);
+    return id;
   }
 
   function getTask(taskId: string): TaskDto {
@@ -497,6 +555,32 @@ export function createStore(db: Db) {
       const row = newGraphRow('project', input, new Date().toISOString());
       sql.insertProject.run(row);
       return dto(row);
+    }),
+
+    /** 담당자로 고를 수 있는 사람(활성 사용자) */
+    listPeople: (): PersonDto[] => sql.people.all().map((row) => ({ id: row.id, username: row.username, displayName: row.display_name })),
+
+    /** 끌어서 옮긴 카드 위치를 저장하거나(set) 지운다(clear: 자동 정렬). 이 그래프의 공정만 받는다. */
+    savePositions: write((projectId: string, input: Input): { saved: number; cleared: number } => {
+      requireProject(projectId);
+      const set = input.set ?? [];
+      const clear = input.clear ?? [];
+      if (!Array.isArray(set) || !Array.isArray(clear)) throw invalidInput('위치(set, clear): 배열이어야 합니다.');
+      if (set.length + clear.length > 2000) throw invalidInput('한 번에 저장할 수 있는 위치는 2000개까지입니다.');
+      const owned = new Set(sql.listTasks.all(projectId).map((task) => task.id));
+      const now = new Date().toISOString();
+      for (const item of set as Input[]) {
+        const taskId = typeof item?.taskId === 'string' ? item.taskId : '';
+        const { x, y } = item ?? {};
+        if (!owned.has(taskId)) throw invalidInput(`이 프로젝트의 공정이 아닙니다: ${taskId}`);
+        if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 1e6 || Math.abs(y) > 1e6) {
+          throw invalidInput('위치(x, y): 숫자여야 합니다.');
+        }
+        sql.upsertPosition.run(projectId, taskId, Math.round(x * 10) / 10, Math.round(y * 10) / 10, now);
+      }
+      let cleared = 0;
+      for (const taskId of clear) if (typeof taskId === 'string') cleared += sql.deletePosition.run(projectId, taskId).changes;
+      return { saved: set.length, cleared };
     }),
 
     /** 프로젝트 또는 템플릿 하나(권한 검사용). 없으면 NOT_FOUND */
@@ -594,6 +678,8 @@ export function createStore(db: Db) {
         status: readStatus(input.status) ?? 'todo',
         jira_url: readLink(input.jiraUrl, 'Jira 링크') ?? null,
         confluence_url: readLink(input.confluenceUrl, 'Confluence 링크') ?? null,
+        deadline: readDeadline(input.deadline) ?? null,
+        assignee_user_id: readAssignee(input.assigneeId) ?? null,
         created_at: now,
         updated_at: now,
       };
@@ -612,6 +698,8 @@ export function createStore(db: Db) {
       checkTemplateInput(task.project_id, input, task);
       const jiraUrl = readLink(input.jiraUrl, 'Jira 링크');
       const confluenceUrl = readLink(input.confluenceUrl, 'Confluence 링크');
+      const deadline = readDeadline(input.deadline);
+      const assignee = readAssignee(input.assigneeId);
       const status = readStatus(input.status) ?? task.status;
       sql.updateTask.run({
         ...task,
@@ -623,6 +711,8 @@ export function createStore(db: Db) {
         status,
         jira_url: jiraUrl === undefined ? task.jira_url : jiraUrl,
         confluence_url: confluenceUrl === undefined ? task.confluence_url : confluenceUrl,
+        deadline: deadline === undefined ? task.deadline : deadline,
+        assignee_user_id: assignee === undefined ? task.assignee_user_id : assignee,
         updated_at: new Date().toISOString(),
       });
       touch(task.project_id);
@@ -771,7 +861,7 @@ function toProjectDto(row: ProjectRow, ownerName: string | null): ProjectDto {
   };
 }
 
-function toTaskDto(row: TaskRow, prerequisites: Prerequisites, hierarchy: Hierarchy): TaskDto {
+function toTaskDto(row: TaskRow, prerequisites: Prerequisites, hierarchy: Hierarchy, assigneeName: string | null): TaskDto {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -782,6 +872,9 @@ function toTaskDto(row: TaskRow, prerequisites: Prerequisites, hierarchy: Hierar
     jiraUrl: row.jira_url,
     jiraKey: row.jira_url ? jiraKeyFromUrl(row.jira_url) : null,
     confluenceUrl: row.confluence_url,
+    deadline: row.deadline,
+    assigneeId: row.assignee_user_id,
+    assigneeName,
     ...prerequisites,
     ...hierarchy,
     createdAt: row.created_at,
@@ -826,6 +919,16 @@ function readLink(value: unknown, label: string): string | null | undefined {
   if (url === '') return null;
   if (!isHttpUrl(url)) throw invalidInput(`${label}: http 또는 https 주소를 입력하세요.`);
   return url;
+}
+
+/** 값이 없으면 undefined(바꾸지 않음), null이나 빈 문자열이면 null(지움), 그 밖에는 있는 날짜(YYYY-MM-DD) */
+function readDeadline(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw invalidInput('기한(deadline): YYYY-MM-DD 형식의 날짜여야 합니다.');
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw invalidInput(`기한(deadline): 없는 날짜입니다: ${value}`);
+  return value;
 }
 
 /** 값이 없으면 undefined, null이면 null(최상위), 그 밖에는 공정 ID */

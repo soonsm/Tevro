@@ -353,3 +353,20 @@ function adjacency(edges: readonly Edge[], direction: 'up' | 'down'): Map<string
   }
   return map;
 }
+
+/** 이 컴퓨터 날짜로 오늘(YYYY-MM-DD). 기한은 날짜만 다루므로 시각대는 보는 사람의 날짜를 따른다. */
+export function localToday(now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** 기한이 지났는데 끝나지 않은 공정. 기한 날짜 당일까지는 지연이 아니다. */
+export function isOverdue(task: { deadline: string | null; status: TaskStatus }, today: string): boolean {
+  return task.deadline !== null && task.status !== 'done' && task.deadline < today;
+}
+
+/** 상위 공정의 기한보다 늦은 기한을 가진 직접 하위 공정. 막지는 않고 알리기만 한다. */
+export function lateChildren<T extends { id: string; parentId: string | null; deadline: string | null }>(tasks: readonly T[], parent: T): T[] {
+  if (!parent.deadline) return [];
+  return tasks.filter((task) => task.parentId === parent.id && task.deadline !== null && task.deadline > parent.deadline!);
+}

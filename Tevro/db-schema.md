@@ -1,7 +1,7 @@
 # Tevro — 테이블 설계서(ERD)
 
 - 문서 상태: MVP 코드 기준 설명서. 스키마의 원본은 코드(`src/server/store.ts`의 `SCHEMA`와 `MIGRATIONS`)이며, 스키마를 바꾸면 이 문서도 함께 고친다.
-- 스키마 버전: 4(템플릿 추가). 버전 이력은 7장
+- 스키마 버전: 5(기한·담당자·카드 위치 추가). 버전 이력은 7장
 - 작성 기준일: 2026-10-25, 계정 테이블 추가 2026-10-31, 템플릿 컬럼 추가 2026-10-31
 - 대상 DB: SQLite 3.53(`better-sqlite3`에 포함), 파일 하나(`data/tevro.db`, 위치는 `TEVRO_DATA_DIR`로 바꿈)
 - 관련 문서: [ADR-0003 저장소와 동시 수정 모델](./adr/0003-storage-and-concurrency.md), [ADR-0004 사용자 인증·권한](./adr/0004-authentication-authorization.md), [ADR-0005 식별자 체계와 삭제 정책](./adr/0005-identifiers-and-deletion.md), [제품 요구사항 §6.9 공정 계층, §7](./product-requirements.md)
@@ -151,6 +151,8 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 | `status` | TEXT | N | `'todo'` | CHECK | 실행 상태. `todo`(미착수), `in-progress`(진행 중), `done`(완료). 하위 공정이 있으면 서버가 자동으로 바꾸기도 한다(5장) |
 | `jira_url` | TEXT | Y | NULL | | Jira 이슈 주소. http·https만, 최대 2,000자. 링크만 저장하며 Jira 상태는 가져오지 않는다 |
 | `confluence_url` | TEXT | Y | NULL | | Confluence 문서 주소. http·https만, 최대 2,000자 |
+| `deadline` | TEXT | Y | NULL | | 기한. `YYYY-MM-DD`(날짜만, 있는 날짜인지 서버가 확인). 지연 여부는 저장하지 않고 화면·CLI가 보는 사람의 오늘 날짜로 계산한다(기한 다음 날부터, 완료면 지연 아님). 템플릿 공정에는 넣지 않고, 템플릿으로 만들 때 복사하지 않는다 |
+| `assignee_user_id` | TEXT | Y | NULL | FK | 담당자. `users.id`, ON DELETE SET NULL. 지정할 때만 활성 사용자인지 보고, 나중에 비활성화돼도 기록은 남는다. 템플릿에는 넣지 않는다 |
 | `created_at` | TEXT | N | | | 만든 시각(ISO 8601 UTC) |
 | `updated_at` | TEXT | N | | | 고친 시각. 제목·설명·상태·링크·상위를 바꿀 때와 자동 전이 때 갱신 |
 
@@ -238,6 +240,17 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 
 인덱스: `access_tokens_by_user (user_id)`.
 
+### 4.8 task_positions — 저장한 카드 위치
+
+| 컬럼 | 타입 | NULL | 기본값 | 키 | 설명 |
+| --- | --- | --- | --- | --- | --- |
+| `project_id` | TEXT | N | | FK | 소속 프로젝트·템플릿 |
+| `task_id` | TEXT | N | | PK, FK | 공정. `(project_id, task_id)` → `tasks(project_id, id)`, ON DELETE CASCADE |
+| `x`, `y` | REAL | N | | | 그 공정이 있는 층의 그래프 좌표(0.1 단위로 반올림) |
+| `updated_at` | TEXT | N | | | 저장한 시각 |
+
+사람이 끌어서 옮긴 카드만 행이 있고, 없는 카드는 자동 배치한다. 모두가 같은 위치를 본다. 바꿀 수 있는 사람(프로젝트는 편집자 이상, 템플릿은 고칠 수 있는 사람)만 저장하고, [자동 정렬]은 그 층의 행을 지운다. 템플릿으로 프로젝트를 만들 때 함께 복사한다. 인덱스: `task_positions_by_project (project_id)`.
+
 ## 5. 무결성: DB 제약과 서버 검증
 
 순환과 계층 고리, 같은 층 규칙은 여러 행에 걸친 조건이라 DB 제약으로 표현할 수 없다. 서버는 모든 쓰기를 `BEGIN IMMEDIATE` 트랜잭션으로 열고, 그 안에서 현재 상태를 읽어 검사한 뒤 저장한다. 그래서 A → B와 B → A가 동시에 들어와도 하나만 저장되고(ADR-0003, AC-18), 하위 두 개의 완료가 동시에 들어와도 상위 자동 완료를 놓치지 않는다(ADR-0003 1.7).
@@ -303,6 +316,7 @@ API 응답에는 있지만 테이블에는 없는 값이다. 저장하면 상태
 | 2 | `tasks.parent_id`, 자기 자신 금지 CHECK, 상위 복합 외래 키, `tasks_by_parent` 인덱스 | 복합 외래 키는 `ALTER TABLE`로 더할 수 없어, SQLite 문서의 12단계 절차대로 `tasks`를 새로 만들어 옮긴다(외래 키 검사를 끈 채로 새 표 생성 → rowid까지 복사 → 옛 표 삭제 → 이름 바꾸기 → 인덱스 재생성 → 외래 키 확인). 기존 공정은 모두 최상위(`parent_id` NULL)가 된다 |
 
 | 3 | `users`, `auth_identities`, `sessions`, `access_tokens`와 인덱스 | 새 테이블만 만든다. 기존 데이터는 그대로이고 사용자는 0명이라, 올린 뒤 서버 관리 명령으로 첫 관리자를 만든다 |
+| 5 | `tasks.deadline`, `tasks.assignee_user_id`, `tasks_by_assignee` 인덱스, `task_positions` 테이블 | `ALTER TABLE ADD COLUMN`과 새 테이블. 기존 공정은 기한·담당자·저장 위치가 없다 |
 | 4 | `projects`의 `kind`, `owner_user_id`, `official`, `template_version`, `template_dirty`, `source_*` 컬럼과 `projects_by_kind` 인덱스 | `ALTER TABLE ADD COLUMN`. 기존 행은 모두 프로젝트(`kind = 'project'`)이고 출처가 없다 |
 
 - 새 단계를 더할 때는 `SCHEMA`(새 DB용)와 `MIGRATIONS`(올리기용)를 함께 고치고, 한 번 배포한 단계는 고치지 않는다. `test/migration.test.ts`가 예전 DB를 올린 결과와 새로 만든 DB의 구조가 같은지 확인한다.

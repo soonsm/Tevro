@@ -56,6 +56,11 @@ export interface TaskDto {
   /** jiraUrl에서 꺼낸 이슈 키. 저장하지 않고 응답할 때 계산한다. */
   jiraKey: string | null;
   confluenceUrl: string | null;
+  /** 기한(YYYY-MM-DD, 날짜만). 없으면 null */
+  deadline: string | null;
+  /** 담당자(Tevro 사용자). 없으면 null */
+  assigneeId: string | null;
+  assigneeName: string | null;
   // 여기서부터 updatedAt 앞까지는 저장하지 않고 응답할 때 계산한다.
   /** 같은 층의 직접 선행·후속 공정 */
   predecessorIds: string[];
@@ -82,6 +87,15 @@ export interface GraphDto {
   dependencies: DependencyDto[];
   /** 말단 공정(하위가 없는 공정) 기준 상태별 개수 */
   summary: Summary;
+  /** 사람이 끌어서 옮겨 저장한 카드 위치. 없는 공정은 자동 배치 */
+  positions: Record<string, { x: number; y: number }>;
+}
+
+/** 담당자로 고를 수 있는 사람(활성 사용자) */
+export interface PersonDto {
+  id: string;
+  username: string;
+  displayName: string;
 }
 
 /** 하위 공정 때문에 자동으로 상태가 바뀐 상위 공정 */
@@ -119,6 +133,10 @@ export interface TaskInput {
   status?: TaskStatus;
   jiraUrl?: string | null;
   confluenceUrl?: string | null;
+  /** YYYY-MM-DD. null이나 빈 문자열이면 지움 */
+  deadline?: string | null;
+  /** 담당자 사용자 ID. null이나 빈 문자열이면 지움 */
+  assigneeId?: string | null;
   /** 만들 때만 받는다. null이나 생략이면 최상위 */
   parentId?: string | null;
 }

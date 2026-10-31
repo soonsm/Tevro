@@ -1829,3 +1829,107 @@ textarea.input {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 기한·담당자: 있는 카드는 한 줄 더 높다(layout의 META_HEIGHT와 같은 20px) */
+.task-node.has-meta {
+  height: 112px;
+}
+
+.task-node.is-parent.has-meta {
+  height: 148px;
+}
+
+.task-node__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.task-node__deadline {
+  font-variant-numeric: tabular-nums;
+}
+
+.task-node__deadline.is-overdue {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.task-node__assignee {
+  margin-left: auto;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.task-node.is-overdue:not(.is-selected):not(.is-cycle) {
+  border-color: var(--danger-line);
+}
+
+.overdue-chip {
+  color: #ffb4ab;
+  font-weight: 700;
+}
+
+.deadline-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.deadline-row .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.filter-tabs {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.filter-tabs button {
+  padding: 4px 10px;
+  border: none;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filter-tabs button[aria-pressed='true'] {
+  background: var(--primary);
+  color: #fff;
+}
+
+.task-row__deadline {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task-row__deadline.is-overdue {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.warn-text {
+  color: var(--warn-fg);
+}
+
+.deadline-row .input,
+.deadline-row .select {
+  width: 100%;
+  min-width: 0;
+}

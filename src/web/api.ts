@@ -6,6 +6,7 @@ import type {
   GraphDto,
   MeDto,
   MoveTaskInput,
+  PersonDto,
   MoveTaskResult,
   Problem,
   ProjectDto,
@@ -149,6 +150,9 @@ export const api = {
   updateUser: (userId: string, input: { role?: Role; active?: boolean; displayName?: string }) =>
     request<UserDto>('PATCH', `/api/v1/users/${id(userId)}`, input),
   resetPassword: (userId: string, password: string) => request<void>('POST', `/api/v1/users/${id(userId)}/password`, { password }),
+  listPeople: () => request<PersonDto[]>('GET', '/api/v1/people'),
+  savePositions: (projectId: string, input: { set?: { taskId: string; x: number; y: number }[]; clear?: string[] }) =>
+    request<{ saved: number; cleared: number }>('PUT', `/api/v1/projects/${id(projectId)}/positions`, input),
   listTemplates: () => request<TemplateSummaryDto[]>('GET', '/api/v1/templates'),
   createTemplate: (input: { name: string; description?: string; official?: boolean }) =>
     request<ProjectDto>('POST', '/api/v1/templates', input),

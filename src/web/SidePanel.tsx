@@ -5,12 +5,15 @@ import {
   TASK_STATUSES,
   ancestorIds,
   hasPrerequisites,
+  isOverdue,
+  lateChildren,
+  localToday,
   treeOrder,
   isHttpUrl,
   type Edge,
   type TaskStatus,
 } from '../shared/domain.ts';
-import type { GraphDto, TaskDto, TaskInput } from '../shared/types.ts';
+import type { GraphDto, PersonDto, TaskDto, TaskInput } from '../shared/types.ts';
 import {
   ArrowDownIcon,
   CheckIcon,
@@ -41,15 +44,33 @@ interface Props {
   onDeleteEdge: (edge: Edge) => void;
   /** 열람자: 보기만 하고 고치는 버튼·입력은 숨기거나 잠근다 */
   readOnly?: boolean;
+  /** 담당자로 고를 수 있는 사람. 체험 모드처럼 계정이 없으면 빈 목록이고 담당자 칸을 숨긴다 */
+  people?: PersonDto[];
+  /** 로그인한 사람의 ID('내가 맡은 일' 필터). 체험 모드면 null */
+  meId?: string | null;
 }
 
-export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdateTask, onMoveTask, onDeleteTask, onDeleteEdge, readOnly = false }: Props) {
+export function SidePanel({
+  graph,
+  selection,
+  levelId,
+  onFocusTask,
+  onOpenLevel,
+  onAddChild,
+  onUpdateTask,
+  onMoveTask,
+  onDeleteTask,
+  onDeleteEdge,
+  readOnly = false,
+  people = [],
+  meId = null,
+}: Props) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
   const template = graph.project.kind === 'template';
   let content = template ? (
     <TemplateOverview graph={graph} onFocusTask={onFocusTask} readOnly={readOnly} />
   ) : (
-    <Overview graph={graph} onFocusTask={onFocusTask} />
+    <Overview graph={graph} onFocusTask={onFocusTask} meId={meId} />
   );
   if (selection?.kind === 'task' && byId.has(selection.id)) {
     const task = byId.get(selection.id)!;
@@ -68,6 +89,7 @@ export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel,
         onDelete={onDeleteTask}
         readOnly={readOnly}
         template={template}
+        people={people}
       />
     );
   } else if (selection?.kind === 'edge' && byId.has(selection.from) && byId.has(selection.to)) {
@@ -120,10 +142,17 @@ function TemplateOverview({ graph, onFocusTask, readOnly }: { graph: GraphDto; o
   );
 }
 
-function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props['onFocusTask'] }) {
+function Overview({ graph, onFocusTask, meId }: { graph: GraphDto; onFocusTask: Props['onFocusTask']; meId: string | null }) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
+  const [mineOnly, setMineOnly] = useState(false);
+  const today = localToday();
   // 상태 요약과 같이 말단 공정 기준으로 본다(F-H09). 상위 공정의 상태는 하위로 드러난다.
-  const remaining = graph.tasks.filter((task) => task.childCount === 0 && task.status !== 'done');
+  // 같은 상태 안에서는 기한이 이른 것부터(기한 없는 것은 뒤로).
+  const remaining = graph.tasks
+    .filter((task) => task.childCount === 0 && task.status !== 'done')
+    .filter((task) => !mineOnly || task.assigneeId === meId)
+    .sort((a, b) => (a.deadline ?? '9999').localeCompare(b.deadline ?? '9999'));
+  const overdue = remaining.filter((task) => isOverdue(task, today)).length;
   const groups: { status: TaskStatus; tasks: TaskDto[] }[] = [
     { status: 'in-progress', tasks: remaining.filter((task) => task.status === 'in-progress') },
     { status: 'todo', tasks: remaining.filter((task) => task.status === 'todo') },
@@ -136,9 +165,26 @@ function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props[
         </p>
       )}
       <section className="panel-section">
-        <h2 className="panel-heading is-large">남은 공정 {remaining.length}</h2>
+        <div className="panel-heading-row">
+          <h2 className="panel-heading is-large">
+            {mineOnly ? '내가 맡은 일' : '남은 공정'} {remaining.length}
+            {overdue > 0 && <span className="task-row__deadline is-overdue"> · 지연 {overdue}</span>}
+          </h2>
+          {meId && (
+            <div className="filter-tabs" role="group" aria-label="보기">
+              <button type="button" aria-pressed={!mineOnly} onClick={() => setMineOnly(false)}>
+                전체
+              </button>
+              <button type="button" aria-pressed={mineOnly} onClick={() => setMineOnly(true)}>
+                내가 맡은 일
+              </button>
+            </div>
+          )}
+        </div>
         {graph.tasks.length === 0 && <p className="panel-note">아직 공정이 없습니다.</p>}
-        {graph.tasks.length > 0 && remaining.length === 0 && <p className="panel-note">모든 공정이 완료되었습니다.</p>}
+        {graph.tasks.length > 0 && remaining.length === 0 && (
+          <p className="panel-note">{mineOnly ? '나에게 맡겨진 남은 일이 없습니다.' : '모든 공정이 완료되었습니다.'}</p>
+        )}
         {groups
           .filter((group) => group.tasks.length > 0)
           .map((group) => (
@@ -157,6 +203,12 @@ function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props[
                         <span>{task.title}</span>
                       </span>
                     </span>
+                    {task.deadline && (
+                      <span className={`task-row__deadline${isOverdue(task, today) ? ' is-overdue' : ''}`}>
+                        {isOverdue(task, today) ? '지연 ' : '~'}
+                        {task.deadline.slice(5).replace('-', '/')}
+                      </span>
+                    )}
                     <PrerequisiteBadge task={task} />
                   </button>
                 );
@@ -170,6 +222,8 @@ function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props[
           <li>공정 추가: 위 입력란에 제목을 쓰고 Enter</li>
           <li>연결: 카드 오른쪽 끝을 끌어 다른 카드에 놓기</li>
           <li>연결 삭제: 연결선을 고르고 Delete</li>
+          <li>카드를 끌어 옮기면 그 자리가 저장되어 모두에게 같게 보입니다. [자동 정렬]을 누르면 다시 배치합니다</li>
+          <li>기한·담당자: 카드를 고르고 오른쪽에서 정합니다. 기한이 지나면 빨간색으로 ‘지연’이 붙습니다</li>
           <li>하위 공정: 카드의 ‘열기’나 두 번 누르기로 들어가고, 위에 뜬 줄의 ← 버튼이나 Esc로 돌아오기</li>
           <li>하위 공정이 모두 완료되면 상위 공정이 자동으로 완료됩니다</li>
           <li>선행 조건이 갖춰지지 않아도 상태 변경은 막지 않습니다</li>
@@ -206,11 +260,12 @@ interface TaskDetailProps {
   onMove: Props['onMoveTask'];
   onDelete: Props['onDeleteTask'];
   readOnly: boolean;
-  /** 템플릿 공정: 진행 상태·선행 충족·Jira 링크가 없다 */
+  /** 템플릿 공정: 진행 상태·선행 충족·Jira 링크·기한·담당자가 없다 */
   template: boolean;
+  people: PersonDto[];
 }
 
-function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete, readOnly, template }: TaskDetailProps) {
+function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete, readOnly, template, people }: TaskDetailProps) {
   const update = (input: TaskInput) => onUpdate(task.id, input);
   const path = parentPath(graph.tasks, byId, task.id);
   const children = graph.tasks.filter((item) => item.parentId === task.id).map((item) => item.id);
@@ -232,6 +287,10 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           </button>
         )}
       </div>
+
+      {!template && (
+        <DeadlineFields task={task} parent={task.parentId ? (byId.get(task.parentId) ?? null) : null} late={lateChildren(graph.tasks, task)} people={people} readOnly={readOnly} onUpdate={update} />
+      )}
 
       {template ? (
         <p className="panel-note is-small">템플릿 공정에는 진행 상태가 없습니다. 이 템플릿으로 만든 프로젝트에서는 모두 미착수로 시작합니다.</p>
@@ -399,6 +458,84 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
         </button>
       )}
     </>
+  );
+}
+
+/** 기한과 담당자. 상위 공정보다 늦은 기한은 막지 않고 알린다. */
+function DeadlineFields({
+  task,
+  parent,
+  late,
+  people,
+  readOnly,
+  onUpdate,
+}: {
+  task: TaskDto;
+  parent: TaskDto | null;
+  late: TaskDto[];
+  people: PersonDto[];
+  readOnly: boolean;
+  onUpdate: (input: TaskInput) => void;
+}) {
+  const overdue = isOverdue(task, localToday());
+  const laterThanParent = parent?.deadline && task.deadline && task.deadline > parent.deadline;
+  // 비활성화돼 목록에 없는 담당자도 이름은 보이게 둔다.
+  const options = task.assigneeId && !people.some((person) => person.id === task.assigneeId)
+    ? [...people, { id: task.assigneeId, username: '', displayName: `${task.assigneeName ?? task.assigneeId} (비활성)` }]
+    : people;
+  return (
+    <div className="panel-section is-tight">
+      <div className="deadline-row">
+        <div className="field">
+          <label className="field-label" htmlFor="task-deadline">
+            기한
+          </label>
+          <input
+            id="task-deadline"
+            className="input"
+            type="date"
+            defaultValue={task.deadline ?? ''}
+            key={task.deadline ?? ''}
+            readOnly={readOnly}
+            // 날짜를 다 고른 때만 저장하고, 비운 채 떠나면 지운다(입력 도중의 빈 값으로 지우지 않게).
+            onChange={(event) => !readOnly && event.target.value && event.target.value !== task.deadline && onUpdate({ deadline: event.target.value })}
+            onBlur={(event) => !readOnly && !event.target.value && task.deadline && onUpdate({ deadline: null })}
+          />
+        </div>
+        {(people.length > 0 || task.assigneeId) && (
+          <div className="field">
+            <label className="field-label" htmlFor="task-assignee">
+              담당
+            </label>
+            <select
+              id="task-assignee"
+              className="select"
+              value={task.assigneeId ?? ''}
+              disabled={readOnly}
+              onChange={(event) => onUpdate({ assigneeId: event.target.value || null })}
+            >
+              <option value="">없음</option>
+              {options.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+      {overdue && <p className="panel-note is-error">기한({task.deadline})이 지났는데 아직 끝나지 않았습니다.</p>}
+      {laterThanParent && (
+        <p className="panel-note is-small warn-text">
+          상위 공정 ‘{parent!.title}’의 기한({parent!.deadline})보다 늦습니다.
+        </p>
+      )}
+      {late.length > 0 && (
+        <p className="panel-note is-small warn-text">
+          하위 공정 {late.length}개의 기한이 이 공정의 기한({task.deadline})보다 늦습니다: {late.map((child) => child.title).join(', ')}
+        </p>
+      )}
+    </div>
   );
 }
 
