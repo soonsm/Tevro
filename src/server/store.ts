@@ -39,8 +39,56 @@ type Input = Record<string, unknown>;
  * 스키마 버전(PRAGMA user_version).
  * 1: 첫 MVP. user_version을 쓰지 않아 0으로 남아 있다.
  * 2: 공정 계층(tasks.parent_id)
+ * 3: 사용자·로그인 수단·세션·개인 액세스 토큰(ADR-0004)
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+
+// 사용자와 로그인 수단을 나눈다. 로컬 비밀번호로 시작해도 나중에 LDAP·SSO 주체를 같은 사용자에 붙일 수 있다(ADR-0004).
+// 세션과 토큰은 비밀값의 해시만 둔다.
+const ACCOUNT_TABLES = `
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  display_name TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('viewer', 'editor', 'admin')),
+  active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_login_at TEXT
+);
+CREATE TABLE auth_identities (
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL COLLATE NOCASE,
+  user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  secret_hash TEXT,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  locked_until TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (provider, subject)
+);
+CREATE INDEX auth_identities_by_user ON auth_identities (user_id);
+CREATE TABLE sessions (
+  id_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  csrf_token TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX sessions_by_user ON sessions (user_id);
+CREATE TABLE access_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('read', 'read-write')),
+  secret_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX access_tokens_by_user ON access_tokens (user_id);
+`;
 
 // 새 DB에 만드는 최신 스키마. 순환은 DB 제약으로 막을 수 없어 서버가 쓰기 트랜잭션 안에서 검사하고, 나머지는 DB 제약으로 한 번 더 막는다(ADR-0003).
 // 테이블·컬럼 설명은 Tevro/db-schema.md에 있다. 스키마를 바꾸면 SCHEMA_VERSION과 MIGRATIONS, 그 문서를 함께 고친다.
@@ -79,7 +127,7 @@ CREATE TABLE dependencies (
   FOREIGN KEY (project_id, from_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE,
   FOREIGN KEY (project_id, to_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE
 );
-`;
+${ACCOUNT_TABLES}`;
 
 /** 예전 DB를 한 단계씩 올리는 SQL. 키는 올린 뒤의 버전이다. 한 번 배포한 단계는 고치지 않고 새 단계를 더한다. */
 const MIGRATIONS: Record<number, string> = {
@@ -107,6 +155,7 @@ ALTER TABLE tasks_new RENAME TO tasks;
 CREATE INDEX tasks_by_project ON tasks (project_id);
 CREATE INDEX tasks_by_parent ON tasks (project_id, parent_id);
 `,
+  3: ACCOUNT_TABLES,
 };
 
 const MAX_LENGTH = { name: 100, title: 200, description: 10_000, url: 2_000, id: 64 };

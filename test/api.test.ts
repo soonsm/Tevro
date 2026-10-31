@@ -424,7 +424,7 @@ describe('링크와 입력 검증', () => {
   it('JSON이 아닌 본문과 없는 경로를 구분해 알려 준다', async () => {
     const response = await fetch(`${server.origin}/api/v1/projects`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${server.token}` },
       body: '{',
     });
     assert.equal(response.status, 400);
@@ -452,28 +452,19 @@ describe('저장과 웹 제공', () => {
     }
   });
 
-  it('TEVRO_PASSWORD를 설정하면 상태 확인 말고는 비밀번호가 맞아야 열린다', async () => {
+  it('로그인하지 않으면 API는 401이지만 상태 확인과 웹 화면 파일은 열린다', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'tevro-auth-'));
-    const locked = await startServer(':memory:', directory, 'correct horse battery');
+    const web = await startServer(':memory:', directory);
     try {
       writeFileSync(join(directory, 'index.html'), '<!doctype html><title>Tevro</title>');
-      const basic = (credentials: string) => ({ authorization: `Basic ${Buffer.from(credentials).toString('base64')}` });
-
-      const anonymous = await fetch(`${locked.origin}/api/v1/projects`);
+      const anonymous = await web.callWith({}, 'GET', '/projects');
       assert.equal(anonymous.status, 401);
-      assert.match(anonymous.headers.get('www-authenticate') ?? '', /^Basic realm="Tevro"/);
-      assert.equal((await anonymous.json()).code, 'UNAUTHORIZED');
-      assert.equal((await fetch(`${locked.origin}/`)).status, 401);
-      const wrong = await fetch(`${locked.origin}/api/v1/projects`, { headers: basic('tevro:wrong password') });
-      assert.equal(wrong.status, 401);
-      assert.equal((await fetch(`${locked.origin}/api/v1/projects`, { headers: basic('no-colon') })).status, 401);
-
-      // 사용자 이름은 보지 않는다.
-      assert.equal((await fetch(`${locked.origin}/api/v1/projects`, { headers: basic('tevro:correct horse battery') })).status, 200);
-      assert.equal((await fetch(`${locked.origin}/`, { headers: basic(':correct horse battery') })).status, 200);
-      assert.equal((await fetch(`${locked.origin}/healthz`)).status, 200);
+      assert.equal(anonymous.data.code, 'UNAUTHENTICATED');
+      assert.equal(anonymous.headers.get('www-authenticate'), null);
+      assert.equal((await fetch(`${web.origin}/`)).status, 200);
+      assert.equal((await fetch(`${web.origin}/healthz`)).status, 200);
     } finally {
-      await locked.close();
+      await web.close();
       rmSync(directory, { recursive: true, force: true });
     }
   });

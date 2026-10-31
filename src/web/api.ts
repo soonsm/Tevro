@@ -1,14 +1,21 @@
 import type {
+  AuthConfigDto,
+  CreatedTokenDto,
   DeleteTaskResult,
   DependencyDto,
   GraphDto,
+  MeDto,
   MoveTaskInput,
   MoveTaskResult,
   Problem,
   ProjectDto,
   TaskChangeResult,
+  Role,
   TaskInput,
+  TokenDto,
+  TokenScope,
   TrialStatus,
+  UserDto,
 } from '../shared/types.ts';
 
 /** 서버가 거부했거나 서버에 닿지 못한 요청. 서버 오류면 problem에 서버 응답이 그대로 들어 있다. */
@@ -50,6 +57,15 @@ const sandboxId =
     return id;
   })();
 
+// 로그인 세션의 CSRF 값(ADR-0004). 로그인·내 정보 응답에서 받아 상태를 바꾸는 요청에 붙인다. 쿠키는 브라우저가 알아서 보낸다.
+let csrfToken: string | null = null;
+// 세션이 끝났을 때(401) 로그인 화면으로 돌려보낼 곳. App이 정한다.
+let onSessionEnded: (() => void) | null = null;
+
+export function whenSessionEnds(handler: (() => void) | null): void {
+  onSessionEnded = handler;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let response: Response;
   const dataset = readSession(DATASET_KEY);
@@ -59,6 +75,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       headers: {
         'x-tevro-sandbox': sandboxId,
         ...(dataset ? { 'x-tevro-dataset': dataset } : {}),
+        ...(csrfToken && method !== 'GET' ? { 'x-tevro-csrf': csrfToken } : {}),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -69,9 +86,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const text = await response.text();
   const data: unknown = text ? JSON.parse(text) : undefined;
   if (!response.ok) {
-    throw new ApiFailure((data as Problem | undefined) ?? { status: response.status, code: 'INTERNAL', detail: response.statusText });
+    const problem = (data as Problem | undefined) ?? { status: response.status, code: 'INTERNAL', detail: response.statusText };
+    if (problem.code === 'UNAUTHENTICATED' && path !== '/api/v1/auth/login' && path !== '/api/v1/auth/me') onSessionEnded?.();
+    throw new ApiFailure(problem);
   }
   return data as T;
+}
+
+async function session<T extends { csrfToken?: string }>(promise: Promise<T>): Promise<T> {
+  const result = await promise;
+  csrfToken = result.csrfToken ?? null;
+  return result;
 }
 
 const id = encodeURIComponent;
@@ -102,6 +127,27 @@ export const api = {
       'DELETE',
       `/api/v1/projects/${id(projectId)}/dependencies?${new URLSearchParams({ from, to })}`,
     ),
+  authConfig: () => request<AuthConfigDto>('GET', '/api/v1/auth/config'),
+  /** 로그인한 사람. 로그인하지 않았으면 UNAUTHENTICATED로 실패한다 */
+  me: () => session(request<MeDto>('GET', '/api/v1/auth/me')),
+  login: (username: string, password: string) =>
+    session(request<{ user: UserDto; csrfToken: string }>('POST', '/api/v1/auth/login', { username, password })),
+  logout: async () => {
+    await request<void>('POST', '/api/v1/auth/logout');
+    csrfToken = null;
+  },
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('POST', '/api/v1/auth/password', { currentPassword, newPassword }),
+  listTokens: () => request<TokenDto[]>('GET', '/api/v1/tokens'),
+  createToken: (name: string, scope: TokenScope, expiresInDays: number) =>
+    request<CreatedTokenDto>('POST', '/api/v1/tokens', { name, scope, expiresInDays }),
+  revokeToken: (tokenId: string) => request<TokenDto>('DELETE', `/api/v1/tokens/${id(tokenId)}`),
+  listUsers: () => request<UserDto[]>('GET', '/api/v1/users'),
+  createUser: (input: { username: string; displayName: string; role: Role; password: string }) =>
+    request<UserDto>('POST', '/api/v1/users', input),
+  updateUser: (userId: string, input: { role?: Role; active?: boolean; displayName?: string }) =>
+    request<UserDto>('PATCH', `/api/v1/users/${id(userId)}`, input),
+  resetPassword: (userId: string, password: string) => request<void>('POST', `/api/v1/users/${id(userId)}/password`, { password }),
   trialStatus: () => trialRequest('GET', '/api/v1/trial'),
   /** 이 창의 데이터를 그 예시 데이터의 처음 상태로 바꾼다 */
   resetTrial: (dataset: string) => trialRequest('POST', '/api/v1/trial/reset', { dataset }),

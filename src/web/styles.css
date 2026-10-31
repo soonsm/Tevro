@@ -1365,3 +1365,160 @@ textarea.input {
     flex: 1;
   }
 }
+
+/* 계정 메뉴(상단 막대 오른쪽) */
+.account {
+  position: relative;
+}
+
+.topbar .account__button {
+  gap: 8px;
+}
+
+.account__name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account__role {
+  font-size: 12px;
+  color: var(--bar-muted);
+}
+
+.account__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.18);
+}
+
+.account__who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+
+.account__who span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.account__menu button {
+  padding: 8px 10px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account__menu button:hover,
+.account__menu button:focus-visible {
+  background: var(--bg);
+}
+
+/* 내 토큰, 사용자 관리 */
+.token-created {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--done-fg);
+  border-radius: 6px;
+  background: var(--done-bg);
+}
+
+.token-created__value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-created__value code {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.token-form,
+.new-user {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.token-form__row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.token-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.token-list,
+.user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.token-list li,
+.user-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.token-list__main,
+.user-list__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-list li.is-inactive .user-list__main {
+  opacity: 0.55;
+}
+
+.user-list .select {
+  width: auto;
+}
+
+.modal:has(.user-list) {
+  width: min(640px, calc(100vw - 32px));
+}

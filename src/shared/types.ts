@@ -107,9 +107,54 @@ export type ErrorCode =
   | 'CROSS_LEVEL_DEPENDENCY'
   | 'HAS_DEPENDENCIES'
   | 'NOT_FOUND'
-  | 'UNAUTHORIZED'
+  | 'UNAUTHENTICATED'
+  | 'FORBIDDEN'
+  | 'ACCOUNT_LOCKED'
   | 'TRIAL_SESSION_REQUIRED'
   | 'INTERNAL';
+
+/** 인스턴스 전체에 적용하는 역할(ADR-0004). 프로젝트별 권한은 없다. */
+export type Role = 'viewer' | 'editor' | 'admin';
+
+export interface UserDto {
+  id: string;
+  username: string;
+  displayName: string;
+  role: Role;
+  active: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+/** 지금 요청한 사람. 웹 세션이면 csrfToken이, 토큰이면 token이 있다. */
+export interface MeDto {
+  user: UserDto;
+  /** 웹 세션: 상태를 바꾸는 요청의 x-tevro-csrf 머리글에 넣을 값 */
+  csrfToken?: string;
+  /** 개인 액세스 토큰으로 부른 경우 그 토큰 */
+  token?: TokenDto;
+}
+
+/** 로그인 화면에 보일 로그인 방식. 지금은 로컬 계정만 있고, LDAP·SSO 등은 같은 자리에 더한다. */
+export interface AuthConfigDto {
+  providers: { id: string; label: string }[];
+}
+
+export type TokenScope = 'read' | 'read-write';
+
+/** 개인 액세스 토큰(ADR-0004). 비밀값은 발급할 때 한 번만 CreatedTokenDto.token으로 준다. */
+export interface TokenDto {
+  id: string;
+  name: string;
+  scope: TokenScope;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface CreatedTokenDto extends TokenDto {
+  token: string;
+}
 
 /** 체험 모드(TEVRO_TRIAL=1): 고를 수 있는 예시 데이터와 이 창이 쓰는 것 */
 export interface TrialStatus {

@@ -3,7 +3,7 @@ import { brokenPaths, descendantIds, treeOrder, type Edge } from '../shared/doma
 import type { GraphDto, TaskDto } from '../shared/types.ts';
 import { WarnIcon } from './icons.tsx';
 
-function Modal({ labelledBy, onClose, children }: { labelledBy: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ labelledBy, onClose, children }: { labelledBy: string; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = ref.current!;

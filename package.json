@@ -5,7 +5,7 @@
   "description": "Tevro MVP — 공정과 선후관계, 진행 상태를 한 화면에서 보는 도구",
   "type": "module",
   "engines": {
-    "node": ">=22.18"
+    "node": ">=24.7"
   },
   "bin": {
     "tevro": "src/cli/main.ts"
@@ -15,6 +15,7 @@
     "build": "vite build",
     "start": "node src/server/main.ts",
     "demo": "node scripts/demo.ts",
+    "admin": "node src/server/admin.ts",
     "test": "node --test --test-reporter=spec test/*.test.ts",
     "typecheck": "tsc"
   },

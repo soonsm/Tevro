@@ -65,7 +65,7 @@ function backups(directory: string): string[] {
 }
 
 describe('스키마 마이그레이션', () => {
-  it('첫 MVP DB(스키마 1)를 계층 스키마(2)로 올리고 데이터와 제약을 지킨다', () => {
+  it('첫 MVP DB(스키마 1)를 최신 스키마(3: 계층, 계정)로 올리고 데이터와 제약을 지킨다', () => {
     withDirectory((directory) => {
       const file = join(directory, 'tevro.db');
       const old = new Database(file);
@@ -83,8 +83,8 @@ describe('스키마 마이그레이션', () => {
       const db = openDatabase(file, (message) => messages.push(message));
       const fresh = openDatabase(':memory:');
       try {
-        assert.equal(db.pragma('user_version', { simple: true }), 2);
-        assert.match(messages.join('\n'), /스키마 1에서 2로/);
+        assert.equal(db.pragma('user_version', { simple: true }), 3);
+        assert.match(messages.join('\n'), /스키마 1에서 3로/);
         assert.equal(backups(directory).length, 1);
         assert.deepEqual(schemaOf(db), schemaOf(fresh));
 
@@ -122,7 +122,7 @@ describe('스키마 마이그레이션', () => {
   it('새 DB는 최신 스키마로 바로 만든다', () => {
     withDirectory((directory) => {
       const db = openDatabase(join(directory, 'tevro.db'));
-      assert.equal(db.pragma('user_version', { simple: true }), 2);
+      assert.equal(db.pragma('user_version', { simple: true }), 3);
       db.close();
       assert.deepEqual(backups(directory), []);
     });

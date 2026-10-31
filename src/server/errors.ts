@@ -11,7 +11,9 @@ const TITLES: Record<ErrorCode, string> = {
   CROSS_LEVEL_DEPENDENCY: '다른 층 공정 연결',
   HAS_DEPENDENCIES: '연결이 남은 공정 이동',
   NOT_FOUND: '대상 없음',
-  UNAUTHORIZED: '인증 필요',
+  UNAUTHENTICATED: '로그인 필요',
+  FORBIDDEN: '권한 없음',
+  ACCOUNT_LOCKED: '계정 잠김',
   TRIAL_SESSION_REQUIRED: '체험 창 정보 없음',
   INTERNAL: '서버 오류',
 };

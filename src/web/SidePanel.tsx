@@ -38,9 +38,11 @@ interface Props {
   onMoveTask: (task: TaskDto) => void;
   onDeleteTask: (task: TaskDto) => void;
   onDeleteEdge: (edge: Edge) => void;
+  /** 열람자: 보기만 하고 고치는 버튼·입력은 숨기거나 잠근다 */
+  readOnly?: boolean;
 }
 
-export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdateTask, onMoveTask, onDeleteTask, onDeleteEdge }: Props) {
+export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdateTask, onMoveTask, onDeleteTask, onDeleteEdge, readOnly = false }: Props) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
   let content = <Overview graph={graph} onFocusTask={onFocusTask} />;
   if (selection?.kind === 'task' && byId.has(selection.id)) {
@@ -58,11 +60,12 @@ export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel,
         onUpdate={onUpdateTask}
         onMove={onMoveTask}
         onDelete={onDeleteTask}
+        readOnly={readOnly}
       />
     );
   } else if (selection?.kind === 'edge' && byId.has(selection.from) && byId.has(selection.to)) {
     content = (
-      <EdgeDetail from={byId.get(selection.from)!} to={byId.get(selection.to)!} onFocusTask={onFocusTask} onDelete={onDeleteEdge} />
+      <EdgeDetail from={byId.get(selection.from)!} to={byId.get(selection.to)!} onFocusTask={onFocusTask} onDelete={onDeleteEdge} readOnly={readOnly} />
     );
   }
   return <aside className="panel">{content}</aside>;
@@ -156,16 +159,17 @@ interface TaskDetailProps {
   onUpdate: Props['onUpdateTask'];
   onMove: Props['onMoveTask'];
   onDelete: Props['onDeleteTask'];
+  readOnly: boolean;
 }
 
-function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete }: TaskDetailProps) {
+function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete, readOnly }: TaskDetailProps) {
   const update = (input: TaskInput) => onUpdate(task.id, input);
   const path = parentPath(graph.tasks, byId, task.id);
   const children = graph.tasks.filter((item) => item.parentId === task.id).map((item) => item.id);
   return (
     <>
       <div className="panel-section is-tight">
-        <TitleField task={task} onSave={(title) => update({ title })} />
+        <TitleField task={task} readOnly={readOnly} onSave={(title) => update({ title })} />
         <IdRow id={task.id} />
       </div>
 
@@ -174,9 +178,11 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
         <span className="location-row__path" title={path || '최상위'}>
           {path ? `${path} 아래` : '최상위'}
         </span>
-        <button type="button" className="button small" onClick={() => onMove(task)}>
-          옮기기
-        </button>
+        {!readOnly && (
+          <button type="button" className="button small" onClick={() => onMove(task)}>
+            옮기기
+          </button>
+        )}
       </div>
 
       <fieldset className="status-field">
@@ -188,7 +194,8 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
               type="button"
               className={`segment status-text-${status}`}
               aria-pressed={task.status === status}
-              onClick={() => task.status !== status && update({ status })}
+              disabled={readOnly && task.status !== status}
+              onClick={() => !readOnly && task.status !== status && update({ status })}
             >
               <StatusIcon status={status} />
               {STATUS_LABELS[status]}
@@ -295,10 +302,12 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
               하위 공정 열기
             </button>
           )}
-          <button type="button" className="button small" onClick={() => onAddChild(task.id)}>
-            <PlusIcon />
-            하위 공정 추가
-          </button>
+          {!readOnly && (
+            <button type="button" className="button small" onClick={() => onAddChild(task.id)}>
+              <PlusIcon />
+              하위 공정 추가
+            </button>
+          )}
         </div>
       </section>
 
@@ -309,6 +318,7 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           url={task.jiraUrl}
           text={task.jiraKey ?? task.jiraUrl}
           placeholder="https://jira…/browse/ABC-123"
+          readOnly={readOnly}
           onSave={(jiraUrl) => update({ jiraUrl })}
         />
         <LinkField
@@ -316,16 +326,19 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           url={task.confluenceUrl}
           text={task.confluenceUrl?.replace(/^https?:\/\//, '') ?? null}
           placeholder="https://wiki…/display/…"
+          readOnly={readOnly}
           onSave={(confluenceUrl) => update({ confluenceUrl })}
         />
         <p className="panel-note is-small">링크만 저장합니다. Jira 상태는 가져오지 않으며, 실행 상태는 Tevro에서 관리합니다.</p>
       </section>
 
-      <DescriptionField task={task} onSave={(description) => update({ description })} />
+      <DescriptionField task={task} readOnly={readOnly} onSave={(description) => update({ description })} />
 
-      <button type="button" className="button danger panel-footer-button" onClick={() => onDelete(task)}>
-        공정 삭제
-      </button>
+      {!readOnly && (
+        <button type="button" className="button danger panel-footer-button" onClick={() => onDelete(task)}>
+          공정 삭제
+        </button>
+      )}
     </>
   );
 }
@@ -349,7 +362,7 @@ function TaskList({ ids, byId, onFocusTask }: { ids: string[]; byId: Map<string,
   );
 }
 
-function TitleField({ task, onSave }: { task: TaskDto; onSave: (title: string) => void }) {
+function TitleField({ task, readOnly, onSave }: { task: TaskDto; readOnly: boolean; onSave: (title: string) => void }) {
   const [value, setValue] = useState(task.title);
   useEffect(() => setValue(task.title), [task.title]);
   const commit = () => {
@@ -366,6 +379,7 @@ function TitleField({ task, onSave }: { task: TaskDto; onSave: (title: string) =
         id="task-title"
         className="input title-input"
         value={value}
+        readOnly={readOnly}
         maxLength={200}
         onChange={(event) => setValue(event.target.value)}
         onBlur={commit}
@@ -413,10 +427,11 @@ interface LinkFieldProps {
   url: string | null;
   text: string | null;
   placeholder: string;
+  readOnly: boolean;
   onSave: (url: string | null) => void;
 }
 
-function LinkField({ label, url, text, placeholder, onSave }: LinkFieldProps) {
+function LinkField({ label, url, text, placeholder, readOnly, onSave }: LinkFieldProps) {
   const inputId = useId();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(url ?? '');
@@ -469,14 +484,16 @@ function LinkField({ label, url, text, placeholder, onSave }: LinkFieldProps) {
       ) : (
         <span className="link-row__empty">없음</span>
       )}
-      <button type="button" className="icon-button" aria-label={`${label} 링크 ${url ? '바꾸기' : '추가'}`} onClick={start}>
-        {url ? <PencilIcon /> : <PlusIcon />}
-      </button>
+      {!readOnly && (
+        <button type="button" className="icon-button" aria-label={`${label} 링크 ${url ? '바꾸기' : '추가'}`} onClick={start}>
+          {url ? <PencilIcon /> : <PlusIcon />}
+        </button>
+      )}
     </div>
   );
 }
 
-function DescriptionField({ task, onSave }: { task: TaskDto; onSave: (description: string) => void }) {
+function DescriptionField({ task, readOnly, onSave }: { task: TaskDto; readOnly: boolean; onSave: (description: string) => void }) {
   const [value, setValue] = useState(task.description);
   useEffect(() => setValue(task.description), [task.description]);
   return (
@@ -489,7 +506,8 @@ function DescriptionField({ task, onSave }: { task: TaskDto; onSave: (descriptio
         className="input"
         rows={3}
         value={value}
-        placeholder="작업 절차, 완료 기준, 참고할 내용"
+        readOnly={readOnly}
+        placeholder={readOnly ? '' : '작업 절차, 완료 기준, 참고할 내용'}
         onChange={(event) => setValue(event.target.value)}
         onBlur={() => value !== task.description && onSave(value)}
       />
@@ -497,7 +515,19 @@ function DescriptionField({ task, onSave }: { task: TaskDto; onSave: (descriptio
   );
 }
 
-function EdgeDetail({ from, to, onFocusTask, onDelete }: { from: TaskDto; to: TaskDto; onFocusTask: Props['onFocusTask']; onDelete: Props['onDeleteEdge'] }) {
+function EdgeDetail({
+  from,
+  to,
+  onFocusTask,
+  onDelete,
+  readOnly,
+}: {
+  from: TaskDto;
+  to: TaskDto;
+  onFocusTask: Props['onFocusTask'];
+  onDelete: Props['onDeleteEdge'];
+  readOnly: boolean;
+}) {
   return (
     <>
       <span className="field-label">선택한 연결</span>
@@ -517,12 +547,14 @@ function EdgeDetail({ from, to, onFocusTask, onDelete }: { from: TaskDto; to: Ta
         </button>
       </div>
       <p className="panel-note">선행 공정이 완료되어야 후속 공정의 선행 조건이 갖춰집니다.</p>
-      <div className="panel-section is-tight">
-        <button type="button" className="button danger" onClick={() => onDelete({ from: from.id, to: to.id })}>
-          연결 삭제
-        </button>
-        <p className="panel-note is-small">연결 하나는 확인 없이 바로 지워집니다. 잘못 지웠다면 다시 끌어서 연결하세요.</p>
-      </div>
+      {!readOnly && (
+        <div className="panel-section is-tight">
+          <button type="button" className="button danger" onClick={() => onDelete({ from: from.id, to: to.id })}>
+            연결 삭제
+          </button>
+          <p className="panel-note is-small">연결 하나는 확인 없이 바로 지워집니다. 잘못 지웠다면 다시 끌어서 연결하세요.</p>
+        </div>
+      )}
     </>
   );
 }

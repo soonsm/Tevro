@@ -7,12 +7,12 @@
 # 갱신(처음 설치한 도메인·브랜치·체험 모드를 그대로 씀):
 #   sudo bash /opt/tevro/deploy/oracle/install.sh
 #   이미 설치된 서버에서는 옵션을 보기 전에 최신 코드를 받아 새 스크립트로 다시 실행하므로, 새 옵션도 바로 쓸 수 있다.
-# 체험 서버로 쓰기(비밀번호 없이, 브라우저 창마다 trial/*.json 예시 데이터의 사본): --trial, 끄기: --no-trial
+# 체험 서버로 쓰기(로그인 없이, 브라우저 창마다 trial/*.json 예시 데이터의 사본): --trial, 끄기: --no-trial
 #
-# 하는 일: Node.js 22와 Caddy 설치 → tevro 사용자·폴더 → 코드 받기·빌드 → systemd 서비스 →
+# 하는 일: Node.js 24와 Caddy 설치 → tevro 사용자·폴더 → 코드 받기·빌드 → systemd 서비스 →
 #          Caddy로 HTTPS(Let's Encrypt 인증서 자동) → Oracle Ubuntu 이미지 방화벽(iptables)에 80·443 열기.
-# 접속 비밀번호는 처음 설치할 때 만들어 /etc/tevro/tevro.env에 둔다. 직접 정하려면 TEVRO_PASSWORD로 넘긴다.
-# 체험 모드에서는 비밀번호를 쓰지 않는다(파일에는 남겨 두어, 체험 모드를 끄면 다시 쓰인다).
+# 보통 서버는 사용자 계정으로 로그인한다(ADR-0004). 첫 관리자는 이 서버에서 sudo tevro-admin user create ...로 만든다.
+# 터미널에서 실행했고 사용자가 아직 없으면 이 스크립트가 첫 관리자를 만들지 묻는다.
 # 자세한 안내: deploy/oracle/README.md
 set -euo pipefail
 
@@ -24,6 +24,7 @@ DATA_DIR=/var/lib/tevro/data
 CONF_DIR=/etc/tevro
 ENV_FILE=/etc/tevro/tevro.env
 INSTALL_CONF=/etc/tevro/install.conf
+ADMIN_BIN=/usr/local/bin/tevro-admin
 PORT=4000
 MARK="deploy/oracle/install.sh가 만든 파일"
 
@@ -39,11 +40,11 @@ usage() {
 사용법: sudo bash install.sh --domain <도메인> [--branch <브랜치>] [--trial | --no-trial]
   --domain    Tevro를 열 주소. 이 서버의 공인 IP를 가리키는 도메인(예: tevro.example.com, myname.duckdns.org)
   --branch    설치할 Git 브랜치(기본: main)
-  --trial     체험 서버로 연다. 비밀번호 없이 누구나 조작할 수 있고, 바꾼 내용은 각자의 브라우저 창에만 남는다
+  --trial     체험 서버로 연다. 로그인 없이 누구나 조작할 수 있고, 바꾼 내용은 각자의 브라우저 창에만 남는다
               (창을 닫으면 처음 데이터로). 예시 데이터는 저장소의 trial/*.json
-  --no-trial  체험 모드를 끄고 보통 서버(비밀번호, 데이터 파일)로 되돌린다
+  --no-trial  체험 모드를 끄고 보통 서버(사용자 계정 로그인, 데이터 파일)로 되돌린다
 처음 설치한 뒤에는 인자 없이 다시 실행하면 같은 설정으로 최신 코드를 받아 다시 시작합니다.
-비밀번호를 직접 정하려면: sudo TEVRO_PASSWORD='12자 이상' bash install.sh ...
+보통 서버의 첫 관리자: sudo tevro-admin user create --username <아이디> --role admin
 EOF
 }
 
@@ -78,15 +79,47 @@ update_self() {
 
 node_ok() {
   command -v node >/dev/null 2>&1 &&
-    node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)'
+    node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 24 || (a === 24 && b >= 7) ? 0 : 1)'
 }
 
+# 비밀번호 해시(Argon2id)에 Node.js 24.7부터 들어 있는 crypto.argon2를 쓴다. 예전에 설치한 Node.js 22는 24로 올린다.
 install_node() {
   node_ok && return
-  log "Node.js 22 설치(NodeSource)"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+  log "Node.js 24 설치(NodeSource)"
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null
   apt-get install -y -q nodejs >/dev/null
-  node_ok || fail "Node.js 22.18 이상을 설치하지 못했습니다."
+  node_ok || fail "Node.js 24.7 이상을 설치하지 못했습니다."
+}
+
+# 서버 관리 명령(첫 관리자, 비밀번호 재설정 등)을 tevro 사용자·데이터 폴더로 실행하는 짧은 명령을 둔다.
+write_admin_command() {
+  cat >"$ADMIN_BIN" <<EOF
+#!/usr/bin/env bash
+# $MARK. Tevro 서버 관리 명령. 예: sudo tevro-admin user create --username admin --role admin
+[ "\$(id -u)" -eq 0 ] || { echo "sudo tevro-admin ...로 실행하세요." >&2; exit 1; }
+cd "$APP_DIR" && exec runuser -u tevro -- env HOME="$TEVRO_HOME" TEVRO_DATA_DIR="$DATA_DIR" "$(command -v node)" src/server/admin.ts "\$@"
+EOF
+  chmod 755 "$ADMIN_BIN"
+}
+
+# 보통 서버에 사용자가 없으면 아무도 로그인할 수 없다. 터미널에서 실행했으면 첫 관리자를 지금 만들지 묻는다.
+ensure_admin() {
+  "$ADMIN_BIN" user list 2>/dev/null | grep -q '사용자가 없습니다' || return 0
+  if [ ! -t 0 ]; then
+    NEEDS_ADMIN=1
+    return 0
+  fi
+  local answer username
+  printf '\n아직 사용자가 없습니다. 첫 관리자를 지금 만들까요? [Y/n] '
+  read -r answer || answer=n
+  case "$answer" in n | N | no | NO) NEEDS_ADMIN=1; return 0 ;; esac
+  printf '관리자 아이디 [admin]: '
+  read -r username || username=""
+  username="${username:-admin}"
+  if ! "$ADMIN_BIN" user create --username "$username" --role admin; then
+    warn "첫 관리자를 만들지 못했습니다. 나중에 sudo tevro-admin user create --username <아이디> --role admin"
+    NEEDS_ADMIN=1
+  fi
 }
 
 install_caddy() {
@@ -270,18 +303,9 @@ $busy"
   as_tevro bash -c "cd '$APP_DIR' && npm ci --no-audit --no-fund --no-update-notifier --loglevel=error && npm run build --silent --no-update-notifier"
 
   log "6/7 설정과 서비스"
-  local password="${TEVRO_PASSWORD:-}" origin=given allowed='^[A-Za-z0-9._~!@%^*+=:,-]+$'
-  if [ -z "$password" ] && [ -f "$ENV_FILE" ]; then
-    password="$(sed -n 's/^TEVRO_PASSWORD=//p' "$ENV_FILE")"
-    origin=kept
-  fi
-  if [ -z "$password" ]; then
-    password="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
-    password="${password:0:24}"
-    origin=generated
-  fi
-  [ "${#password}" -ge 12 ] || fail "비밀번호는 12자 이상이어야 합니다."
-  [[ "$password" =~ $allowed ]] || fail "비밀번호에는 영문, 숫자와 . _ ~ ! @ % ^ * + = : , - 만 쓸 수 있습니다."
+  # 예전 설치의 공용 비밀번호(TEVRO_PASSWORD)는 사용자 계정 로그인으로 바뀌어 더 쓰지 않으므로 옮기지 않는다.
+  local had_password=0
+  if [ -f "$ENV_FILE" ] && grep -q '^TEVRO_PASSWORD=' "$ENV_FILE"; then had_password=1; fi
   (
     umask 077
     cat >"$ENV_FILE" <<EOF
@@ -289,14 +313,18 @@ $busy"
 PORT=$PORT
 HOST=127.0.0.1
 TEVRO_DATA_DIR=$DATA_DIR
-TEVRO_PASSWORD=$password
 TEVRO_TRIAL=$trial
+# Caddy가 HTTPS로 받으므로 로그인 쿠키에 항상 Secure를 붙인다.
+TEVRO_COOKIE_SECURE=1
 EOF
   )
   chmod 600 "$ENV_FILE"
   printf 'TEVRO_DOMAIN=%s\nTEVRO_BRANCH=%s\nTEVRO_TRIAL=%s\n' "$domain" "$branch" "$trial" >"$INSTALL_CONF"
+  write_admin_command
   write_service
   wait_for_server
+  NEEDS_ADMIN=0
+  [ "$trial" = 1 ] || ensure_admin
 
   log "7/7 HTTPS(Caddy)와 방화벽"
   write_caddyfile "$domain"
@@ -309,16 +337,19 @@ EOF
   printf '\n설치를 마쳤습니다.\n'
   printf '  주소      https://%s\n' "$domain"
   if [ "$trial" = 1 ]; then
-    printf '  체험 모드 켜짐. 비밀번호 없이 열리고, 바꾼 내용은 각자의 브라우저 창에만 남습니다\n'
+    printf '  체험 모드 켜짐. 로그인 없이 열리고, 바꾼 내용은 각자의 브라우저 창에만 남습니다\n'
     printf '  예시 데이터 %s/trial/*.json (저장소에서 바꾼 뒤 이 스크립트를 다시 실행하면 반영)\n' "$APP_DIR"
     printf '  체험 모드 끄기 sudo bash %s/deploy/oracle/install.sh --no-trial\n' "$APP_DIR"
   else
-    case "$origin" in
-      generated) printf '  비밀번호  %s   (사용자 이름은 비우거나 아무거나. 지금 적어 두세요)\n' "$password" ;;
-      given) printf '  비밀번호  TEVRO_PASSWORD로 넘긴 값\n' ;;
-      kept) printf '  비밀번호  그대로 유지(%s 의 TEVRO_PASSWORD)\n' "$ENV_FILE" ;;
-    esac
+    printf '  로그인    사용자 계정(웹 화면 오른쪽 위 계정 메뉴에서 사용자 관리·토큰 발급)\n'
+    printf '  관리 명령 sudo tevro-admin user list | create | reset-password | set-role | activate | deactivate\n'
     printf '  데이터    %s/tevro.db\n' "$DATA_DIR"
+    if [ "$had_password" = 1 ]; then
+      printf '  공용 비밀번호(TEVRO_PASSWORD)는 없앴습니다. 이제 각자 계정으로 로그인합니다.\n'
+    fi
+    if [ "$NEEDS_ADMIN" = 1 ]; then
+      warn "아직 사용자가 없어 아무도 로그인할 수 없습니다. 첫 관리자를 만드세요: sudo tevro-admin user create --username admin --role admin"
+    fi
   fi
   printf '  상태·로그 systemctl status tevro / journalctl -u tevro -f\n'
   printf '\nHTTPS 인증서는 아래 두 가지가 맞으면 Caddy가 몇 분 안에 자동으로 받습니다(journalctl -u caddy -f).\n'

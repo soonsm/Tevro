@@ -1,8 +1,9 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { STATUS_LABELS, TRANSITION_LABELS, type Edge, type Summary } from '../shared/domain.ts';
-import type { AutoTransition, GraphDto, ProjectDto, TaskDto, TaskInput, TrialStatus } from '../shared/types.ts';
-import { ApiFailure, api } from './api.ts';
+import type { AutoTransition, GraphDto, ProjectDto, TaskDto, TaskInput, TrialStatus, UserDto } from '../shared/types.ts';
+import { AccountMenu, LoginScreen } from './account.tsx';
+import { ApiFailure, api, whenSessionEnds } from './api.ts';
 import { DeleteTaskDialog, MoveTaskDialog, NewProjectDialog, SwitchDatasetDialog } from './dialogs.tsx';
 import { GraphCanvas } from './GraphCanvas.tsx';
 import { AlertIcon, CloseIcon, InfoIcon, LayoutIcon, PlusIcon, RefreshIcon, StatusChip } from './icons.tsx';
@@ -31,7 +32,79 @@ function transitionText(transitions: AutoTransition[]): string {
   return transitions.map((item) => `${item.title} → ${STATUS_LABELS[item.status]} (${TRANSITION_LABELS[item.cause]})`).join(', ');
 }
 
+type Gate =
+  | { kind: 'loading' }
+  | { kind: 'trial' }
+  | { kind: 'login' }
+  | { kind: 'signed-in'; user: UserDto }
+  | { kind: 'error'; detail: string };
+
+/** 로그인 여부를 보고 로그인 화면이나 작업 화면을 띄운다. 체험 서버는 로그인 없이 바로 작업 화면이다. */
 export function App() {
+  const [gate, setGate] = useState<Gate>({ kind: 'loading' });
+
+  useEffect(() => {
+    whenSessionEnds(() => setGate({ kind: 'login' }));
+    void start();
+    return () => whenSessionEnds(null);
+  }, []);
+
+  async function start() {
+    setGate({ kind: 'loading' });
+    try {
+      if (await api.trialStatus()) {
+        setGate({ kind: 'trial' });
+        return;
+      }
+      setGate({ kind: 'signed-in', user: (await api.me()).user });
+    } catch (error) {
+      if (error instanceof ApiFailure && error.problem.code === 'UNAUTHENTICATED') setGate({ kind: 'login' });
+      else setGate({ kind: 'error', detail: error instanceof ApiFailure ? error.problem.detail : String(error) });
+    }
+  }
+
+  async function logout() {
+    try {
+      await api.logout();
+    } finally {
+      setGate({ kind: 'login' });
+    }
+  }
+
+  switch (gate.kind) {
+    case 'trial':
+      return <Workspace user={null} />;
+    case 'signed-in':
+      return <Workspace key={gate.user.id} user={gate.user} onLogout={() => void logout()} />;
+    case 'login':
+      return <LoginScreen onLogin={(user) => setGate({ kind: 'signed-in', user })} />;
+    default:
+      return (
+        <div className="app">
+          <header className="topbar">
+            <span className="brand">Tevro</span>
+          </header>
+          <div className="center-message">
+            {gate.kind === 'error' ? (
+              <div className="message-card">
+                <h1>서버에 연결하지 못했습니다</h1>
+                <p className="panel-note">{gate.detail}</p>
+                <button type="button" className="button primary" onClick={() => void start()}>
+                  다시 시도
+                </button>
+              </div>
+            ) : (
+              <p className="panel-note">불러오는 중…</p>
+            )}
+          </div>
+        </div>
+      );
+  }
+}
+
+/** 프로젝트 그래프를 보고 고치는 화면. user가 null이면 체험 모드(로그인 없음), 열람자면 보기만 한다. */
+function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => void }) {
+  const readOnly = user?.role === 'viewer';
   const [projects, setProjects] = useState<ProjectDto[] | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [graph, setGraph] = useState<GraphDto | null>(null);
@@ -290,9 +363,11 @@ export function App() {
                 </option>
               ))}
             </select>
-            <button type="button" className="button" onClick={() => setDialog({ kind: 'new-project' })}>
-              <PlusIcon />새 프로젝트
-            </button>
+            {!readOnly && (
+              <button type="button" className="button" onClick={() => setDialog({ kind: 'new-project' })}>
+                <PlusIcon />새 프로젝트
+              </button>
+            )}
           </div>
         )}
         <div className="topbar__end">
@@ -301,6 +376,7 @@ export function App() {
             <RefreshIcon />
             새로고침
           </button>
+          {user && onLogout && <AccountMenu user={user} onLogout={onLogout} />}
         </div>
       </header>
 
@@ -326,11 +402,21 @@ export function App() {
           )}
         </div>
       ) : projects.length === 0 ? (
-        <FirstProject notice={notice} onCreate={createProject} />
+        readOnly ? (
+          <div className="center-message">
+            <div className="message-card">
+              <h1>아직 프로젝트가 없습니다</h1>
+              <p className="panel-note">열람자는 프로젝트를 만들 수 없습니다. 편집자에게 요청하거나 관리자에게 역할 변경을 요청하세요.</p>
+            </div>
+          </div>
+        ) : (
+          <FirstProject notice={notice} onCreate={createProject} />
+        )
       ) : graph ? (
         <div className="workspace">
           <main className="canvas-column">
             <Toolbar
+              readOnly={readOnly}
               levelTitle={levelTask?.title ?? null}
               onAdd={addTask}
               onArrange={() => setLayoutRequest((count) => count + 1)}
@@ -356,11 +442,14 @@ export function App() {
                   onOpen={openLevel}
                   onConnect={addDependency}
                   onDeleteEdge={removeDependency}
+                  readOnly={readOnly}
                 />
               </ReactFlowProvider>
               {levelTaskCount === 0 && (
                 <p className="canvas-empty">
-                  {levelTask
+                  {readOnly
+                    ? '이 층에는 공정이 없습니다.'
+                    : levelTask
                     ? `‘${levelTask.title}’ 안에 하위 공정이 없습니다. 위 입력란에 제목을 쓰고 Enter를 누르세요.`
                     : '아직 공정이 없습니다. 위 입력란에 첫 공정의 제목을 쓰고 Enter를 누르세요.'}
                 </p>
@@ -379,6 +468,7 @@ export function App() {
             onMoveTask={(task) => setDialog({ kind: 'move-task', task })}
             onDeleteTask={(task) => setDialog({ kind: 'delete-task', task })}
             onDeleteEdge={removeDependency}
+            readOnly={readOnly}
           />
         </div>
       ) : (
@@ -429,19 +519,32 @@ function SummaryChips({ summary }: { summary: Summary }) {
 }
 
 interface ToolbarProps {
+  /** 열람자: 공정 추가 입력란 대신 보기 전용임을 알린다 */
+  readOnly: boolean;
   /** 하위 층에 있으면 그 상위 공정의 제목. 새 공정은 그 아래에 들어간다 */
   levelTitle: string | null;
   onAdd: (title: string) => Promise<boolean>;
   onArrange: () => void;
 }
 
-function Toolbar({ levelTitle, onAdd, onArrange }: ToolbarProps) {
+function Toolbar({ readOnly, levelTitle, onAdd, onArrange }: ToolbarProps) {
   const [title, setTitle] = useState('');
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const trimmed = title.trim();
     if (trimmed && (await onAdd(trimmed))) setTitle('');
   };
+  if (readOnly) {
+    return (
+      <div className="toolbar">
+        <button type="button" className="button" onClick={onArrange}>
+          <LayoutIcon />
+          자동 정렬
+        </button>
+        <span className="toolbar__hint">열람자 계정이라 보기만 할 수 있습니다.</span>
+      </div>
+    );
+  }
   return (
     <div className="toolbar">
       <form className="add-task" onSubmit={submit}>

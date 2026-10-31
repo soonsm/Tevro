@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Tevro CLI. GUI와 같은 서버 API만 호출하고, 로컬에 따로 상태를 두지 않는다(PRD F-C08).
 import { Command, CommanderError, Option } from 'commander';
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import {
   INCONSISTENCY_LABELS,
   STATUS_LABELS,
@@ -21,6 +24,7 @@ import type {
   GraphDto,
   MoveTaskResult,
   Problem,
+  MeDto,
   ProjectDto,
   TaskChangeResult,
   TaskDto,
@@ -40,8 +44,13 @@ const STRUCTURE_CODES = new Set([
 
 interface GlobalOptions {
   server?: string;
+  tokenFile?: string;
   json?: boolean;
 }
+
+const TOKEN_PREFIX = 'tevro_pat_';
+// 토큰을 저장하는 파일(권한 600). config set-token --stdin으로 만든다(ADR-0007 §5).
+const CONFIG_TOKEN_FILE = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'tevro', 'token');
 
 interface CliErrorBody {
   code: string;
@@ -71,6 +80,7 @@ process.stdout.on('error', (error: NodeJS.ErrnoException) => {
 const program = new Command('tevro')
   .description('Tevro CLI — 공정과 선후관계, 진행 상태를 서버 API로 조회·변경합니다.')
   .option('--server <url>', '서버 주소 (기본: TEVRO_SERVER 또는 http://localhost:4000)')
+  .option('--token-file <path>', '개인 액세스 토큰을 담은 파일(권한 600). 기본: TEVRO_TOKEN, 그다음 config set-token으로 저장한 파일')
   .option('--json', '결과를 JSON으로 출력 (에이전트용)')
   .helpOption('-h, --help', '도움말 보기')
   .helpCommand('help [command]', '명령 도움말 보기')
@@ -79,9 +89,52 @@ const program = new Command('tevro')
   .configureOutput({ outputError: (text, write) => (jsonRequested ? undefined : write(text)) })
   .addHelpText(
     'after',
-    '\n서버에 비밀번호가 걸려 있으면 TEVRO_PASSWORD 환경변수에 넣으세요(명령행 인자로는 받지 않음).' +
-      '\n종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·--yes 필요, 3 검증 실패, 4 비밀번호 필요·틀림, 6 대상 없음, 8 서버 연결 실패',
+    '\n인증: 웹 화면 [내 토큰]에서 개인 액세스 토큰을 발급해 TEVRO_TOKEN 환경변수에 넣거나 `tevro config set-token --stdin`으로 저장하세요(명령행 인자로는 받지 않음).' +
+      '\n종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·--yes 필요, 3 검증 실패, 4 인증·권한, 6 대상 없음, 8 서버 연결 실패',
   );
+
+program
+  .command('whoami')
+  .description('지금 쓰는 토큰의 사용자·역할·범위')
+  .action(async (_options, command: Command) => {
+    const me = await client(command).get<MeDto>('/api/v1/auth/me');
+    emit(command, me, () =>
+      [
+        `${me.user.displayName} (${me.user.username}, ${ROLE_LABELS[me.user.role]})`,
+        me.token ? `토큰: ${me.token.name} (${me.token.id}), 범위 ${me.token.scope}, 만료 ${me.token.expiresAt.slice(0, 10)}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  });
+
+const config = program.command('config').description('이 컴퓨터의 CLI 설정');
+
+config
+  .command('set-token')
+  .description('표준 입력으로 받은 토큰을 설정 파일(권한 600)에 저장')
+  .requiredOption('--stdin', '표준 입력에서 읽기 (예: tevro config set-token --stdin < token.txt)')
+  .action(async (_options, command: Command) => {
+    const token = (await readStdin()).trim();
+    if (!token.startsWith(TOKEN_PREFIX)) {
+      throw new CliFailure(EXIT.usage, { code: 'USAGE', detail: `토큰은 ${TOKEN_PREFIX}로 시작해야 합니다. 웹 화면 [내 토큰]에서 발급한 값을 넣으세요.` });
+    }
+    mkdirSync(dirname(CONFIG_TOKEN_FILE), { recursive: true, mode: 0o700 });
+    writeFileSync(CONFIG_TOKEN_FILE, `${token}\n`, { mode: 0o600 });
+    chmodSync(CONFIG_TOKEN_FILE, 0o600);
+    emit(command, { file: CONFIG_TOKEN_FILE }, () => `토큰을 저장했습니다: ${CONFIG_TOKEN_FILE}`);
+  });
+
+config
+  .command('show')
+  .description('서버 주소와 토큰을 어디서 읽는지 (토큰 값은 보여 주지 않음)')
+  .action((_options, command: Command) => {
+    const options = globals(command);
+    const server = options.server ?? process.env.TEVRO_SERVER ?? 'http://localhost:4000';
+    const source = tokenSource(options);
+    const shown = { server, token: source ? source.label : null };
+    emit(command, shown, () => `서버  ${server}\n토큰  ${source ? source.label : '없음 (TEVRO_TOKEN 또는 config set-token --stdin)'}`);
+  });
 
 const project = program.command('project').description('프로젝트');
 
@@ -387,12 +440,11 @@ async function emitEdge(command: Command, api: Client, projectId: string, edge: 
 type Client = ReturnType<typeof client>;
 
 function client(command: Command) {
-  const base = (globals(command).server ?? process.env.TEVRO_SERVER ?? 'http://localhost:4000').replace(/\/+$/, '');
-  // 비밀번호는 환경변수로만 받는다. 명령행 인자는 셸 기록과 프로세스 목록에 남는다(ADR-0004).
-  const password = process.env.TEVRO_PASSWORD;
-  const auth: Record<string, string> = password
-    ? { authorization: `Basic ${Buffer.from(`tevro:${password}`).toString('base64')}` }
-    : {};
+  const options = globals(command);
+  const base = (options.server ?? process.env.TEVRO_SERVER ?? 'http://localhost:4000').replace(/\/+$/, '');
+  // 토큰은 파일이나 환경변수로만 받는다. 명령행 인자는 셸 기록과 프로세스 목록에 남는다(ADR-0004).
+  const token = readToken(options);
+  const auth: Record<string, string> = token ? { authorization: `Bearer ${token}` } : {};
 
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
     let response: Response;
@@ -418,8 +470,8 @@ function client(command: Command) {
     }
     if (!response.ok) {
       const problem = data as Problem;
-      if (problem.code === 'UNAUTHORIZED') {
-        problem.detail += password ? ' TEVRO_PASSWORD 값이 맞는지 확인하세요.' : ' TEVRO_PASSWORD 환경변수에 서버 비밀번호를 넣으세요.';
+      if (problem.code === 'UNAUTHENTICATED' && !token) {
+        problem.detail += ' 웹 화면 [내 토큰]에서 개인 액세스 토큰을 발급해 TEVRO_TOKEN에 넣거나 `tevro config set-token --stdin`으로 저장하세요.';
       }
       throw new CliFailure(exitCodeOf(problem.code), problem as unknown as CliErrorBody);
     }
@@ -436,8 +488,46 @@ function client(command: Command) {
 
 function exitCodeOf(code: string): number {
   if (code.startsWith('VALIDATION_') || STRUCTURE_CODES.has(code)) return EXIT.validation;
-  if (code === 'UNAUTHORIZED') return EXIT.auth;
+  if (code === 'UNAUTHENTICATED' || code === 'FORBIDDEN' || code === 'ACCOUNT_LOCKED') return EXIT.auth;
   return code === 'NOT_FOUND' ? EXIT.notFound : EXIT.failure;
+}
+
+const ROLE_LABELS = { viewer: '열람자', editor: '편집자', admin: '관리자' } as const;
+
+/** 토큰을 어디서 읽을지: --token-file, TEVRO_TOKEN, 설정 파일 순(ADR-0007 §5) */
+function tokenSource(options: GlobalOptions): { label: string; file?: string; value?: string } | null {
+  if (options.tokenFile) return { label: `파일 ${options.tokenFile} (--token-file)`, file: options.tokenFile };
+  if (process.env.TEVRO_TOKEN) return { label: '환경변수 TEVRO_TOKEN', value: process.env.TEVRO_TOKEN };
+  try {
+    statSync(CONFIG_TOKEN_FILE);
+    return { label: `파일 ${CONFIG_TOKEN_FILE}`, file: CONFIG_TOKEN_FILE };
+  } catch {
+    return null;
+  }
+}
+
+function readToken(options: GlobalOptions): string | null {
+  const source = tokenSource(options);
+  if (!source) return null;
+  if (source.value !== undefined) return source.value.trim();
+  const file = source.file!;
+  let mode: number;
+  try {
+    mode = statSync(file).mode;
+  } catch {
+    throw new CliFailure(EXIT.auth, { code: 'TOKEN_FILE', detail: `토큰 파일을 찾지 못했습니다: ${file}` });
+  }
+  // 다른 사용자도 읽을 수 있는 파일의 토큰은 쓰지 않는다(Windows는 이 권한 비트가 의미가 없어 보지 않음).
+  if (process.platform !== 'win32' && (mode & 0o077) !== 0) {
+    throw new CliFailure(EXIT.auth, { code: 'TOKEN_FILE', detail: `토큰 파일을 소유자만 읽을 수 있게 하세요: chmod 600 ${file}` });
+  }
+  return readFileSync(file, 'utf8').trim();
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin as AsyncIterable<Buffer>) chunks.push(chunk);
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 function segment(id: string): string {

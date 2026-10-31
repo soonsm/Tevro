@@ -82,9 +82,11 @@ interface Props {
   onOpen: (taskId: string) => void;
   onConnect: (from: string, to: string) => void;
   onDeleteEdge: (edge: Edge) => void;
+  /** 열람자: 연결을 만들거나 지울 수 없다 */
+  readOnly?: boolean;
 }
 
-export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, onSelect, onOpen, onConnect, onDeleteEdge }: Props) {
+export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, onSelect, onOpen, onConnect, onDeleteEdge, readOnly = false }: Props) {
   const { fitView } = useReactFlow();
   const [nodes, setNodes] = useState<TaskNodeType[]>([]);
   const [layout, setLayout] = useState<Layout | null>(null);
@@ -224,7 +226,8 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
           }
           return false;
         }}
-        deleteKeyCode={['Backspace', 'Delete']}
+        nodesConnectable={!readOnly}
+        deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
         selectionKeyCode={null}
         multiSelectionKeyCode={null}
         zoomOnDoubleClick={false}

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { createTrial, loadTemplates } from '../src/server/trial.ts';
 import { startServer, startTrialServer, type TestServer } from './helpers.ts';
@@ -8,24 +10,35 @@ import { startServer, startTrialServer, type TestServer } from './helpers.ts';
 const CLI = resolve(import.meta.dirname, '../src/cli/main.ts');
 
 let server: TestServer;
+// 이 컴퓨터의 ~/.config/tevro/token을 읽지 않게 설정 폴더를 따로 둔다.
+const configHome = mkdtempSync(join(tmpdir(), 'tevro-cli-config-'));
 
 before(async () => {
   server = await startServer();
 });
 
-after(() => server.close());
+after(async () => {
+  await server.close();
+  rmSync(configHome, { recursive: true, force: true });
+});
 
 function tevro(
   args: string[],
   serverUrl = server.origin,
   extraEnv: Record<string, string> = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const env: NodeJS.ProcessEnv = { ...process.env, TEVRO_SERVER: serverUrl, ...extraEnv };
-  if (!('TEVRO_PASSWORD' in extraEnv)) delete env.TEVRO_PASSWORD;
+  // 기본은 시험 서버 관리자의 read-write 토큰. extraEnv에 TEVRO_TOKEN을 ''로 주면 토큰 없이 부른다.
+  const env: NodeJS.ProcessEnv = { ...process.env, TEVRO_SERVER: serverUrl, TEVRO_TOKEN: server.token, XDG_CONFIG_HOME: configHome, ...extraEnv };
+  if (env.TEVRO_TOKEN === '') delete env.TEVRO_TOKEN;
+  return run(args, env);
+}
+
+function run(args: string[], env: NodeJS.ProcessEnv, input?: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((done) => {
-    execFile(process.execPath, [CLI, ...args], { env }, (error, stdout, stderr) => {
+    const child = execFile(process.execPath, [CLI, ...args], { env }, (error, stdout, stderr) => {
       done({ code: error ? Number(error.code) : 0, stdout, stderr });
     });
+    if (input !== undefined) child.stdin!.end(input);
   });
 }
 
@@ -99,19 +112,52 @@ describe('CLI', () => {
   });
 });
 
-describe('CLI 비밀번호', () => {
-  it('비밀번호가 걸린 서버는 TEVRO_PASSWORD가 없으면 종료 코드 4, 있으면 성공한다', async () => {
-    const locked = await startServer(':memory:', undefined, 'correct horse battery');
+describe('CLI 인증', () => {
+  it('토큰이 없으면 종료 코드 4와 발급 안내, 틀린 토큰도 4이며 토큰 값은 출력하지 않는다', async () => {
+    const missing = await tevro(['project', 'list'], server.origin, { TEVRO_TOKEN: '' });
+    assert.equal(missing.code, 4);
+    assert.match(missing.stderr, /TEVRO_TOKEN/);
+    const wrong = await tevro(['project', 'list', '--json'], server.origin, { TEVRO_TOKEN: 'tevro_pat_wrong-secret-value' });
+    assert.equal(wrong.code, 4);
+    assert.equal(JSON.parse(wrong.stderr).error.code, 'UNAUTHENTICATED');
+    assert.doesNotMatch(wrong.stderr + wrong.stdout, /wrong-secret-value/);
+  });
+
+  it('read 토큰으로는 조회만 되고 바꾸려 하면 종료 코드 4(FORBIDDEN)', async () => {
+    const admin = server.accounts.findUser('admin')!;
+    const read = server.accounts.createToken({ user: admin, via: 'session' }, { name: 'agent', scope: 'read' }).token;
+    assert.equal((await tevro(['project', 'list'], server.origin, { TEVRO_TOKEN: read })).code, 0);
+    const denied = await tevro(['project', 'create', '--name', '안 됨', '--json'], server.origin, { TEVRO_TOKEN: read });
+    assert.equal(denied.code, 4);
+    assert.equal(JSON.parse(denied.stderr).error.code, 'FORBIDDEN');
+    const me = JSON.parse((await tevro(['whoami', '--json'], server.origin, { TEVRO_TOKEN: read })).stdout).data;
+    assert.equal(me.user.username, 'admin');
+    assert.equal(me.token.scope, 'read');
+    assert.equal(me.token.name, 'agent');
+  });
+
+  it('config set-token --stdin은 권한 600 파일에 저장하고, 다른 사람이 읽을 수 있는 토큰 파일은 거부한다', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'tevro-cli-home-'));
     try {
-      const missing = await tevro(['project', 'list'], locked.origin);
-      assert.equal(missing.code, 4);
-      assert.match(missing.stderr, /TEVRO_PASSWORD 환경변수/);
-      assert.equal((await tevro(['project', 'list'], locked.origin, { TEVRO_PASSWORD: 'wrong password!' })).code, 4);
-      const ok = await tevro(['project', 'list', '--json'], locked.origin, { TEVRO_PASSWORD: 'correct horse battery' });
-      assert.equal(ok.code, 0, ok.stderr);
-      assert.deepEqual(JSON.parse(ok.stdout).data, []);
+      const env: NodeJS.ProcessEnv = { ...process.env, TEVRO_SERVER: server.origin, XDG_CONFIG_HOME: home };
+      delete env.TEVRO_TOKEN;
+      assert.equal((await run(['config', 'set-token', '--stdin'], env, 'not-a-token\n')).code, 2);
+      const saved = await run(['config', 'set-token', '--stdin'], env, `${server.token}\n`);
+      assert.equal(saved.code, 0, saved.stderr);
+      const file = join(home, 'tevro', 'token');
+      assert.equal(statSync(file).mode & 0o777, 0o600);
+      assert.equal((await run(['project', 'list'], env)).code, 0);
+      const shown = await run(['config', 'show'], env);
+      assert.match(shown.stdout, /토큰 {2}파일 /);
+      assert.doesNotMatch(shown.stdout, /tevro_pat_/);
+
+      const loose = join(home, 'loose-token');
+      writeFileSync(loose, server.token, { mode: 0o644 });
+      const refused = await run(['--token-file', loose, 'project', 'list'], env);
+      assert.equal(refused.code, 4);
+      assert.match(refused.stderr, /chmod 600/);
     } finally {
-      await locked.close();
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });
