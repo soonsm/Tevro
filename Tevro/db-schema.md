@@ -1,10 +1,10 @@
 # Tevro — 테이블 설계서(ERD)
 
 - 문서 상태: MVP 코드 기준 설명서. 스키마의 원본은 코드(`src/server/store.ts`의 `SCHEMA`와 `MIGRATIONS`)이며, 스키마를 바꾸면 이 문서도 함께 고친다.
-- 스키마 버전: 2(공정 계층 추가). 버전 이력은 7장
-- 작성 기준일: 2026-10-25
+- 스키마 버전: 3(사용자·인증 추가). 버전 이력은 7장
+- 작성 기준일: 2026-10-25, 계정 테이블 추가 2026-10-31
 - 대상 DB: SQLite 3.53(`better-sqlite3`에 포함), 파일 하나(`data/tevro.db`, 위치는 `TEVRO_DATA_DIR`로 바꿈)
-- 관련 문서: [ADR-0003 저장소와 동시 수정 모델](./adr/0003-storage-and-concurrency.md), [ADR-0005 식별자 체계와 삭제 정책](./adr/0005-identifiers-and-deletion.md), [제품 요구사항 §6.9 공정 계층, §7](./product-requirements.md)
+- 관련 문서: [ADR-0003 저장소와 동시 수정 모델](./adr/0003-storage-and-concurrency.md), [ADR-0004 사용자 인증·권한](./adr/0004-authentication-authorization.md), [ADR-0005 식별자 체계와 삭제 정책](./adr/0005-identifiers-and-deletion.md), [제품 요구사항 §6.9 공정 계층, §7](./product-requirements.md)
 
 ## 1. ERD
 
@@ -46,6 +46,51 @@ erDiagram
 
 `dependencies` 한 행이 연결 하나다. `from_task_id → to_task_id`는 from 공정이 to 공정의 선행 공정이라는 뜻이다.
 
+사용자·인증 테이블(스키마 3)은 공정 데이터와 외래 키로 이어지지 않는다. 생성·수정 행위자 컬럼은 아직 없다(8장).
+
+```mermaid
+erDiagram
+    users ||--o{ auth_identities : "로그인 수단"
+    users ||--o{ sessions : "웹 세션"
+    users ||--o{ access_tokens : "개인 액세스 토큰"
+
+    users {
+        TEXT id PK "usr_ + ULID"
+        TEXT username UK "아이디(대소문자 무시)"
+        TEXT display_name "화면에 보일 이름"
+        TEXT role "viewer, editor, admin"
+        INTEGER active "1 활성, 0 비활성"
+        TEXT last_login_at "마지막 로그인"
+    }
+
+    auth_identities {
+        TEXT provider PK "local, 나중에 ldap 등"
+        TEXT subject PK "공급자 안의 ID"
+        TEXT user_id FK "사용자"
+        TEXT secret_hash "local의 Argon2id 해시"
+        INTEGER failed_count "연속 실패 횟수"
+        TEXT locked_until "잠금 해제 시각"
+    }
+
+    sessions {
+        TEXT id_hash PK "쿠키 값의 SHA-256"
+        TEXT user_id FK "사용자"
+        TEXT csrf_token "CSRF 확인값"
+        TEXT last_seen_at "마지막 요청"
+        TEXT expires_at "절대 만료"
+    }
+
+    access_tokens {
+        TEXT id PK "tok_ + ULID"
+        TEXT user_id FK "발급한 사람"
+        TEXT name "용도"
+        TEXT scope "read, read-write"
+        TEXT secret_hash UK "토큰 값의 SHA-256"
+        TEXT expires_at "만료"
+        TEXT revoked_at "폐기 시각"
+    }
+```
+
 포함관계(상위·하위)와 선행관계(연결)는 다른 차원이라 섞지 않는다(PRD §5.3). 포함관계는 `tasks.parent_id`로, 선행관계는 `dependencies`로만 나타낸다. 같은 `parent_id`를 가진 공정들(최상위끼리 포함)이 한 층을 이루고, 연결은 같은 층 안에서만 맺는다.
 
 ## 2. 테이블 목록
@@ -55,6 +100,10 @@ erDiagram
 | `projects` | 프로젝트 | 공정을 0개 이상 가진다 |
 | `tasks` | 공정(할 일) | 한 프로젝트에 속하고, 상위 공정을 0~1개 가지며, 연결의 선행·후속이 된다 |
 | `dependencies` | 선후관계(연결) | 같은 프로젝트, 같은 층의 공정 둘을 잇는다 |
+| `users` | 사용자와 역할 | 로그인 수단·세션·토큰을 0개 이상 가진다 |
+| `auth_identities` | 로그인 수단(공급자 + 공급자 안의 ID) | 사용자 하나에 속한다 |
+| `sessions` | 웹 로그인 세션 | 사용자 하나에 속한다 |
+| `access_tokens` | CLI·AI 에이전트용 개인 액세스 토큰 | 발급한 사용자 하나에 속한다 |
 
 ## 3. 관계
 
@@ -123,6 +172,63 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 
 연결 목록은 연결한 순서(rowid)로 돌려준다. 두 공정의 `parent_id`가 같아야 한다는 규칙(같은 층)은 DB 제약이 아니라 서버가 검사한다(5장).
 
+### 4.4 users — 사용자
+
+| 컬럼 | 타입 | NULL | 기본값 | 키 | 설명 |
+| --- | --- | --- | --- | --- | --- |
+| `id` | TEXT | N | | PK | `usr_` + ULID. 로그인 수단을 바꾸거나 더해도 그대로다 |
+| `username` | TEXT | N | | UNIQUE | 아이디. 영문·숫자와 `. _ @ -`, 1~64자. `COLLATE NOCASE`라 대소문자만 다른 아이디는 같은 아이디다 |
+| `display_name` | TEXT | N | | | 화면에 보일 이름, 1~100자. 주지 않으면 아이디 |
+| `role` | TEXT | N | | CHECK | `viewer`(열람자), `editor`(편집자), `admin`(관리자). 인스턴스 전체에 적용한다(ADR-0004) |
+| `active` | INTEGER | N | 1 | CHECK | 0이면 로그인도 토큰도 막힌다. 행을 지우지 않고 비활성화한다 |
+| `created_at`, `updated_at` | TEXT | N | | | 만든·고친 시각 |
+| `last_login_at` | TEXT | Y | NULL | | 마지막 로그인 시각 |
+
+활성 관리자가 한 명뿐이면 그 사람을 강등하거나 비활성화하지 못한다(서버 검사).
+
+### 4.5 auth_identities — 로그인 수단
+
+| 컬럼 | 타입 | NULL | 기본값 | 키 | 설명 |
+| --- | --- | --- | --- | --- | --- |
+| `provider` | TEXT | N | | PK | 로그인 공급자. 지금은 `local`(Tevro 비밀번호)만 있고, 사내 LDAP·SSO는 새 공급자 값으로 더한다 |
+| `subject` | TEXT | N | | PK | 공급자 안의 ID. `local`은 아이디. `COLLATE NOCASE` |
+| `user_id` | TEXT | N | | FK | `users.id`, ON DELETE CASCADE |
+| `secret_hash` | TEXT | Y | NULL | | `local`의 비밀번호 해시. PHC 문자열 `$argon2id$v=19$m=19456,t=2,p=1$<솔트>$<해시>`(Node.js 내장 `crypto.argon2`). 외부 공급자는 NULL |
+| `failed_count` | INTEGER | N | 0 | | 연속으로 틀린 횟수. 맞으면 0 |
+| `locked_until` | TEXT | Y | NULL | | 5번 연속 틀리면 15분 뒤 시각을 넣는다. 그때까지는 맞는 비밀번호로도 못 들어온다 |
+| `created_at` | TEXT | N | | | 만든 시각 |
+
+인덱스: `auth_identities_by_user (user_id)`.
+
+### 4.6 sessions — 웹 세션
+
+| 컬럼 | 타입 | NULL | 기본값 | 키 | 설명 |
+| --- | --- | --- | --- | --- | --- |
+| `id_hash` | TEXT | N | | PK | 쿠키 값(무작위 32바이트)의 SHA-256. 쿠키 값 자체는 저장하지 않는다 |
+| `user_id` | TEXT | N | | FK | `users.id`, ON DELETE CASCADE |
+| `csrf_token` | TEXT | N | | | 바꾸는 요청의 `x-tevro-csrf` 머리글과 비교하는 값 |
+| `created_at` | TEXT | N | | | 로그인 시각 |
+| `last_seen_at` | TEXT | N | | | 마지막 요청 시각(1분 간격으로만 고침). 8시간 지나면 만료 |
+| `expires_at` | TEXT | N | | | 로그인 뒤 7일. 써도 연장하지 않는다 |
+
+인덱스: `sessions_by_user (user_id)`. 역할 변경·비활성화·비밀번호 재설정 때 그 사람의 세션을 지운다. 만료된 행은 다음 로그인 때 지운다.
+
+### 4.7 access_tokens — 개인 액세스 토큰
+
+| 컬럼 | 타입 | NULL | 기본값 | 키 | 설명 |
+| --- | --- | --- | --- | --- | --- |
+| `id` | TEXT | N | | PK | `tok_` + ULID. 화면·로그에 보여도 되는 식별자 |
+| `user_id` | TEXT | N | | FK | 발급한 사람. `users.id`, ON DELETE CASCADE |
+| `name` | TEXT | N | | | 용도, 1~100자 |
+| `scope` | TEXT | N | | CHECK | `read` 또는 `read-write`. 실제 권한은 이 범위와 사용자 역할의 교집합 |
+| `secret_hash` | TEXT | N | | UNIQUE | 토큰 값(`tevro_pat_` + 무작위 32바이트)의 SHA-256 |
+| `created_at` | TEXT | N | | | 발급 시각 |
+| `expires_at` | TEXT | N | | | 만료 시각. 1~365일(기본 30일) |
+| `last_used_at` | TEXT | Y | NULL | | 마지막 사용(1분 간격으로만 고침) |
+| `revoked_at` | TEXT | Y | NULL | | 폐기 시각. 행은 지우지 않는다 |
+
+인덱스: `access_tokens_by_user (user_id)`.
+
 ## 5. 무결성: DB 제약과 서버 검증
 
 순환과 계층 고리, 같은 층 규칙은 여러 행에 걸친 조건이라 DB 제약으로 표현할 수 없다. 서버는 모든 쓰기를 `BEGIN IMMEDIATE` 트랜잭션으로 열고, 그 안에서 현재 상태를 읽어 검사한 뒤 저장한다. 그래서 A → B와 B → A가 동시에 들어와도 하나만 저장되고(ADR-0003, AC-18), 하위 두 개의 완료가 동시에 들어와도 상위 자동 완료를 놓치지 않는다(ADR-0003 1.7).
@@ -187,6 +293,8 @@ API 응답에는 있지만 테이블에는 없는 값이다. 저장하면 상태
 | 1 | 첫 MVP. `user_version`을 쓰지 않아 0으로 남아 있다. 테이블이 있고 `user_version`이 0이면 1로 본다 | — |
 | 2 | `tasks.parent_id`, 자기 자신 금지 CHECK, 상위 복합 외래 키, `tasks_by_parent` 인덱스 | 복합 외래 키는 `ALTER TABLE`로 더할 수 없어, SQLite 문서의 12단계 절차대로 `tasks`를 새로 만들어 옮긴다(외래 키 검사를 끈 채로 새 표 생성 → rowid까지 복사 → 옛 표 삭제 → 이름 바꾸기 → 인덱스 재생성 → 외래 키 확인). 기존 공정은 모두 최상위(`parent_id` NULL)가 된다 |
 
+| 3 | `users`, `auth_identities`, `sessions`, `access_tokens`와 인덱스 | 새 테이블만 만든다. 기존 데이터는 그대로이고 사용자는 0명이라, 올린 뒤 서버 관리 명령으로 첫 관리자를 만든다 |
+
 - 새 단계를 더할 때는 `SCHEMA`(새 DB용)와 `MIGRATIONS`(올리기용)를 함께 고치고, 한 번 배포한 단계는 고치지 않는다. `test/migration.test.ts`가 예전 DB를 올린 결과와 새로 만든 DB의 구조가 같은지 확인한다.
 - 백업 기능은 아직 없다. 서버를 멈춘 뒤 `data` 폴더를 통째로 복사하면 된다.
 
@@ -196,6 +304,6 @@ API 응답에는 있지만 테이블에는 없는 값이다. 저장하면 상태
 | --- | --- | --- |
 | 구조 리비전 | ADR-0003 1.1 | `projects.graph_revision` INTEGER |
 | 공정 버전(낙관적 잠금) | ADR-0003 1.2 | `tasks.version` INTEGER. 자동 전이 응답의 `version`도 이때 더한다(ADR-0006 §8) |
-| 사용자·인증 | ADR-0004 | 사용자, 인증 수단, 세션, 개인 액세스 토큰 테이블과 생성·수정 행위자 컬럼 |
+| 생성·수정 행위자 | ADR-0004 | 프로젝트·공정의 마지막 수정자(사용자 ID, 토큰 ID) 컬럼. 사용자·인증 테이블은 스키마 3에서 만들었다 |
 | 노드 좌표 | README의 ADR 후보 '그래프 배치·좌표 저장' | 구조 리비전·버전과 분리한 별도 테이블. 층별 좌표 포함 |
 | Jira 매핑 | PRD §6.7(Jira 선택 연동 단계) | 매핑·반영 결과 테이블. MVP의 `jira_url`은 링크일 뿐 매핑이 아니다 |

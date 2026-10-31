@@ -4,7 +4,7 @@ Oracle Cloud의 무료(Always Free) 가상 서버에 Tevro를 올려, 인터넷�
 
 구성은 이렇습니다. Caddy가 HTTPS 인증서(Let's Encrypt)를 자동으로 받아 443번 포트로 접속을 받고, 같은 서버 안의 Tevro(127.0.0.1:4000)로 넘깁니다. Tevro 포트는 밖에 열지 않습니다.
 
-> **임시 공용 비밀번호:** 정식 로그인([ADR-0004](../../Tevro/adr/0004-authentication-authorization.md))을 만들기 전까지 쓰는 장치입니다. 모두 같은 비밀번호를 쓰고, 누가 무엇을 바꿨는지는 남지 않습니다. 비밀번호를 아는 사람은 모든 데이터를 고치고 지울 수 있습니다.
+> **로그인:** 보통 서버는 사람마다 계정으로 로그인합니다([ADR-0004](../../Tevro/adr/0004-authentication-authorization.md)). 역할은 열람자·편집자·관리자이고, 첫 관리자는 서버에서 `sudo tevro-admin`으로 만듭니다(5장). 2026-10-31 이전 설치의 공용 비밀번호(`TEVRO_PASSWORD`)는 갱신할 때 없어집니다.
 
 ## 준비물
 
@@ -64,40 +64,55 @@ sudo bash install.sh --domain <도메인> --branch claude/zealous-ride-imn72j
 
 작은 서버에서는 10분 가까이 걸릴 수 있습니다. 스크립트가 하는 일:
 
-1. 기본 패키지, Node.js 22(NodeSource), Caddy(공식 저장소) 설치. 메모리가 2GB보다 작으면 빌드용 스왑 2GB를 만듭니다.
+1. 기본 패키지, Node.js 24(NodeSource), Caddy(공식 저장소) 설치. 예전에 설치한 Node.js 22는 24로 올립니다. 메모리가 2GB보다 작으면 빌드용 스왑 2GB를 만듭니다.
 2. `tevro` 시스템 사용자를 만들고, 코드를 `/opt/tevro`에 받아 빌드합니다.
-3. 설정 파일 `/etc/tevro/tevro.env`(비밀번호 포함, root만 읽음)와 systemd 서비스 `tevro`를 만들고 시작합니다.
+3. 설정 파일 `/etc/tevro/tevro.env`(root만 읽음), systemd 서비스 `tevro`, 관리 명령 `tevro-admin`을 만들고 서비스를 시작합니다.
 4. Caddy를 설정하고, Oracle Ubuntu 이미지의 iptables 방화벽에 80·443을 엽니다.
 
-끝나면 주소와 **비밀번호**가 한 번 나옵니다. 지금 적어 두세요. 나중에 다시 보려면 `sudo grep TEVRO_PASSWORD /etc/tevro/tevro.env`.
+터미널에서 실행했고 사용자가 아직 없으면, 끝나기 전에 **첫 관리자**를 만들지 묻습니다. 아이디를 정하고 비밀번호(10자 이상)를 두 번 넣으면 됩니다.
 
-## 5. 접속
+## 5. 접속과 첫 관리자
 
-브라우저에서 `https://<도메인>`을 엽니다. 로그인 창이 뜨면 사용자 이름은 비우거나 아무거나 쓰고, 비밀번호를 넣습니다. 처음 몇 분은 인증서를 받는 중이라 접속이 안 될 수 있습니다.
-
-예시 프로젝트를 넣어 보려면 서버에서(체험 모드가 아닐 때):
+첫 관리자를 아직 안 만들었다면 서버에서 만듭니다. 비밀번호는 화면에 보이지 않게 두 번 묻습니다.
 
 ```sh
-sudo bash -c 'set -a && . /etc/tevro/tevro.env && cd /opt/tevro && node scripts/demo.ts'
+sudo tevro-admin user create --username admin --role admin
+```
+
+브라우저에서 `https://<도메인>`을 열고 그 계정으로 로그인합니다. 처음 몇 분은 인증서를 받는 중이라 접속이 안 될 수 있습니다. 다른 사람의 계정은 화면 오른쪽 위 계정 메뉴의 **사용자 관리**에서 만듭니다.
+
+| 역할 | 할 수 있는 일 |
+| --- | --- |
+| 열람자 | 보기만. CLI 토큰도 읽기 전용(read)만 발급 |
+| 편집자 | 프로젝트·공정·연결·상태 바꾸기 |
+| 관리자 | 편집자 + 사용자 추가·역할 변경·비활성화·비밀번호 재설정, 남의 토큰 폐기 |
+
+비밀번호를 5번 연속 틀리면 그 계정은 15분 동안 잠깁니다. 로그인한 뒤 8시간 동안 안 쓰면, 계속 써도 7일이 지나면 다시 로그인합니다.
+
+예시 프로젝트를 넣어 보려면, 계정 메뉴의 **내 토큰**에서 read-write 토큰을 발급한 뒤 서버에서(체험 모드가 아닐 때):
+
+```sh
+sudo bash -c 'cd /opt/tevro && TEVRO_TOKEN=<토큰> node scripts/demo.ts'
 ```
 
 마지막 줄에 나오는 `http://localhost:4000/...` 대신 `https://<도메인>`으로 여세요.
 
-## 6. 내 컴퓨터의 CLI로 쓰기
+## 6. 내 컴퓨터의 CLI·AI 에이전트로 쓰기
 
-저장소를 받은 컴퓨터에서 서버 주소와 비밀번호를 환경변수로 넘깁니다. 비밀번호는 명령행 인자로 받지 않습니다.
+계정 메뉴의 **내 토큰**에서 개인 액세스 토큰(`tevro_pat_…`)을 발급합니다. 값은 발급할 때 한 번만 보입니다. 에이전트에게 바꾸기까지 맡기려면 read-write, 조회만 맡기려면 read로 발급합니다. 토큰은 명령행 인자로 받지 않습니다.
 
 ```sh
 export TEVRO_SERVER=https://<도메인>
-export TEVRO_PASSWORD=<비밀번호>
+export TEVRO_TOKEN=tevro_pat_…              # 또는: tevro config set-token --stdin  (권한 600 파일에 저장)
+node src/cli/main.ts whoami
 node src/cli/main.ts project list
 ```
 
-비밀번호가 없거나 틀리면 종료 코드 4로 끝납니다.
+토큰이 없거나 만료·폐기됐거나, 범위·역할이 모자라면 종료 코드 4로 끝납니다. 토큰으로는 새 토큰 발급이나 사용자 관리를 할 수 없습니다(웹에서만).
 
 ## 7. 체험 서버로 쓰기
 
-심사위원이나 동료가 비밀번호 없이 직접 조작해 보게 하려면 체험 모드로 엽니다.
+심사위원이나 동료가 로그인 없이 직접 조작해 보게 하려면 체험 모드로 엽니다.
 
 ```sh
 sudo bash /opt/tevro/deploy/oracle/install.sh --trial
@@ -110,20 +125,20 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 > sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 > ```
 
-- 비밀번호 없이 열립니다. 화면 위 안내 띠에서 예시 데이터(개발자용·일반직용)를 고릅니다.
+- 로그인 없이 열립니다. 화면 위 안내 띠에서 예시 데이터(개발자용·일반직용)를 고릅니다.
 - 바꾼 내용은 각자의 브라우저 창에만 남습니다. 새로고침해도 유지되고, 창을 닫았다 다시 열면 처음 데이터로 돌아갑니다. 서버의 데이터 파일(`tevro.db`)은 쓰지도 바꾸지도 않습니다.
 - 예시 데이터는 저장소의 `trial/*.json`입니다([형식](../../trial/README.md)). 바꾼 뒤 저장소에 올리고 설치 스크립트를 인자 없이 다시 실행하면 반영됩니다. 이때 열려 있던 창의 사본도 처음 상태로 돌아갑니다.
-- 끄기: `sudo bash /opt/tevro/deploy/oracle/install.sh --no-trial`. 보통 서버로 돌아가며, 전에 쓰던 비밀번호와 데이터 파일을 그대로 씁니다.
+- 끄기: `sudo bash /opt/tevro/deploy/oracle/install.sh --no-trial`. 보통 서버(계정 로그인)로 돌아가며, 전에 쓰던 데이터 파일을 그대로 씁니다. 사용자가 없으면 첫 관리자를 만들어야 합니다(5장).
 - 체험 서버에는 CLI로 접속할 수 없습니다. 2시간 동안 안 쓴 창의 사본은 지워지고, 그 창은 다시 열 때처럼 처음 상태로 시작합니다.
 
 ## 운영
 
 | 할 일 | 방법 |
 | --- | --- |
-| 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·비밀번호·체험 모드를 그대로 씀). 스크립트도 먼저 최신으로 받아 그것으로 실행합니다 |
+| 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·체험 모드를 그대로 씀). 스크립트도 먼저 최신으로 받아 그것으로 실행합니다 |
 | 체험 모드 켜기·끄기 | 같은 명령에 `--trial` 또는 `--no-trial`. 한 번 정하면 이후 갱신에도 유지됩니다(7장) |
-| 도메인 바꾸기 | 새 도메인의 DNS를 서버 공인 IP로 건 뒤 `sudo bash /opt/tevro/deploy/oracle/install.sh --domain <새 도메인>`. 이후 갱신에도 새 도메인이 쓰이고, 예전 도메인으로는 더는 열리지 않습니다. 데이터와 비밀번호는 그대로입니다 |
-| 비밀번호 바꾸기 | `/etc/tevro/tevro.env`의 `TEVRO_PASSWORD`를 고친 뒤 `sudo systemctl restart tevro`. 12자 이상, 영문·숫자와 `. _ ~ ! @ % ^ * + = : , -`만 |
+| 도메인 바꾸기 | 새 도메인의 DNS를 서버 공인 IP로 건 뒤 `sudo bash /opt/tevro/deploy/oracle/install.sh --domain <새 도메인>`. 이후 갱신에도 새 도메인이 쓰이고, 예전 도메인으로는 더는 열리지 않습니다. 데이터와 계정은 그대로입니다 |
+| 사용자 관리(서버에서) | `sudo tevro-admin user list`, `user create --username <아이디> --role viewer\|editor\|admin`, `user reset-password <아이디>`(잠금도 풂), `user set-role <아이디> <역할>`, `user activate\|deactivate <아이디>`. 웹의 사용자 관리와 같은 일을 하며, 관리자가 로그인할 수 없을 때 씁니다 |
 | 상태·로그 | `systemctl status tevro`, `journalctl -u tevro -f`, 인증서는 `journalctl -u caddy -f` |
 | 다시 시작 | `sudo systemctl restart tevro` |
 | 데이터 위치 | `/var/lib/tevro/data/tevro.db`(같은 폴더의 `-wal`·`-shm` 파일까지 한 묶음) |
@@ -135,7 +150,7 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 
 - **유휴 서버 회수:** Oracle은 Always Free 서버가 7일 동안 CPU·네트워크(Ampere는 메모리도) 사용률 20% 미만이면 회수할 수 있다고 [공식 문서](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)에 적고 있습니다. Tevro는 평소 거의 쉬므로 해당될 수 있습니다. 백업을 두고, 서버가 멈추면 콘솔에서 다시 시작하세요. 종량제(Pay As You Go) 계정은 회수 대상에서 빠진다는 이야기가 있지만 공식 문서로 확인하지 못했습니다.
 - **데이터 위치:** 데이터가 Oracle Cloud에 저장됩니다. 실제 업무 데이터를 넣어도 되는지는 사내 기준을 확인하세요. 최종 설치는 폐쇄망이 기준입니다(PRD N-02).
-- **시험 범위:** 이 스크립트는 Ubuntu 24.04(x86_64) 컨테이너에서 설치, 비밀번호, HTTPS 프록시, 갱신, 방화벽 단계를 확인했습니다. Ampere(arm64) 서버와 실제 Let's Encrypt 발급은 시험하지 못했습니다.
+- **시험 범위:** 이 스크립트는 Ubuntu 24.04(x86_64) 컨테이너에서 설치, 갱신(Node.js 22→24 포함), 체험 모드 켜기·끄기, 첫 관리자 만들기(터미널·비터미널), 계정 로그인, HTTPS 프록시, 방화벽 단계를 확인했습니다. Ampere(arm64) 서버와 실제 Let's Encrypt 발급은 시험하지 못했습니다.
 
 ## 문제 해결
 
@@ -143,6 +158,6 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 | --- | --- |
 | 브라우저가 접속하지 못함 | 2번의 수신 규칙(80·443), `nslookup <도메인>`이 공인 IP인지, `sudo ss -ltnp \| grep -E ':(80\|443) '`에 caddy가 있는지 |
 | 인증서 오류 | DNS가 반영되기 전에 발급을 시도한 경우가 많습니다. 몇 분 기다리거나 `sudo systemctl restart caddy`. 같은 도메인으로 발급에 계속 실패하면 Let's Encrypt가 한동안 막으므로 `journalctl -u caddy`의 원인을 먼저 고칩니다 |
-| 로그인 창이 계속 다시 뜸 | 비밀번호 확인: `sudo grep TEVRO_PASSWORD /etc/tevro/tevro.env` |
+| 로그인이 안 됨 | 사용자가 있는지 `sudo tevro-admin user list`. 잠겼거나 비밀번호를 잊었으면 `sudo tevro-admin user reset-password <아이디>`. 비활성 계정은 `user activate` |
 | 설치가 빌드 단계에서 멈춤 | 메모리 부족일 수 있습니다. `free -h`로 스왑을 확인하거나 메모리가 더 큰 Shape를 씁니다 |
 | `502` 오류 | Tevro 서버가 멈춘 상태입니다. `journalctl -u tevro -n 50` |
