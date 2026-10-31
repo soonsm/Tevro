@@ -14,6 +14,8 @@ export interface Dataset {
   label: string;
   order: number;
   projects: DatasetProject[];
+  /** 회사 템플릿으로 넣는다. 공정에 진행 상태와 Jira 링크를 쓸 수 없다 */
+  templates: DatasetProject[];
 }
 
 export interface DatasetProject {
@@ -93,7 +95,11 @@ function buildTemplate(key: string, file: string): Template {
   const db = openDatabase(':memory:');
   try {
     const store = createStore(db);
-    for (const project of dataset.projects) {
+    const graphs = [
+      ...dataset.projects.map((project) => ({ project, kind: 'project' as const })),
+      ...dataset.templates.map((project) => ({ project, kind: 'template' as const })),
+    ];
+    for (const { project, kind } of graphs) {
       const step = <T>(what: string, action: () => T): T => {
         try {
           return action();
@@ -102,7 +108,11 @@ function buildTemplate(key: string, file: string): Template {
           throw error;
         }
       };
-      const projectId = step('프로젝트', () => store.createProject({ name: project.name, description: project.description })).id;
+      const input = { name: project.name, description: project.description };
+      // 체험 모드에는 계정이 없어 템플릿은 모두 회사 템플릿(공식)으로 넣는다.
+      const projectId = step(kind === 'project' ? '프로젝트' : '템플릿', () =>
+        kind === 'project' ? store.createProject(input) : store.createTemplate(input, { ownerId: null, official: true }),
+      ).id;
       const ids = new Map<string, string>();
       for (const task of project.tasks) {
         const created = step(`공정 ${task.key}`, () =>
@@ -138,48 +148,57 @@ export function readDataset(file: string): Dataset {
   } catch (error) {
     return fail(`JSON으로 읽지 못했습니다. ${(error as Error).message}`);
   }
-  const root = record(data, '파일', ['label', 'order', 'projects'], fail);
+  const root = record(data, '파일', ['label', 'order', 'projects', 'templates'], fail);
   const label = text(root.label, 'label', fail);
   const order = root.order === undefined ? 0 : typeof root.order === 'number' ? root.order : fail('order는 숫자여야 합니다');
   if (!Array.isArray(root.projects) || root.projects.length === 0) fail('projects에 프로젝트가 하나 이상 있어야 합니다');
-  const projects = (root.projects as unknown[]).map((value, index): DatasetProject => {
-    const where = `projects[${index}]`;
-    const project = record(value, where, ['name', 'description', 'tasks', 'dependencies'], fail);
-    const name = text(project.name, `${where}.name`, fail);
-    if (!Array.isArray(project.tasks)) fail(`${where}.tasks는 목록이어야 합니다`);
-    const tasks = (project.tasks as unknown[]).map((item, position): DatasetTask => {
-      const at = `${where}.tasks[${position}]`;
-      const task = record(item, at, ['key', 'title', 'status', 'parent', 'description', 'jiraUrl', 'confluenceUrl'], fail);
-      const status = task.status;
-      if (status !== undefined && !(TASK_STATUSES as readonly unknown[]).includes(status)) {
-        fail(`${at}.status는 ${TASK_STATUSES.join(', ')} 중 하나여야 합니다`);
-      }
-      return {
-        key: text(task.key, `${at}.key`, fail),
-        title: text(task.title, `${at}.title`, fail),
-        status: status as TaskStatus | undefined,
-        parent: optionalText(task.parent, `${at}.parent`, fail),
-        description: optionalText(task.description, `${at}.description`, fail),
-        jiraUrl: optionalText(task.jiraUrl, `${at}.jiraUrl`, fail),
-        confluenceUrl: optionalText(task.confluenceUrl, `${at}.confluenceUrl`, fail),
-      };
-    });
-    const keys = new Set<string>();
-    for (const task of tasks) {
-      if (keys.has(task.key)) fail(`‘${name}’에 key가 ${task.key}인 공정이 둘 이상 있습니다`);
-      keys.add(task.key);
+  if (root.templates !== undefined && !Array.isArray(root.templates)) fail('templates는 목록이어야 합니다');
+  const projects = (root.projects as unknown[]).map((value, index) => readGraph(value, `projects[${index}]`, false, fail));
+  const templates = ((root.templates ?? []) as unknown[]).map((value, index) => readGraph(value, `templates[${index}]`, true, fail));
+  return { label, order, projects, templates };
+}
+
+/** 프로젝트·템플릿 하나. 템플릿 공정에는 진행 상태와 Jira 링크를 쓸 수 없다(템플릿에는 실행 정보가 없음). */
+function readGraph(value: unknown, where: string, template: boolean, fail: (message: string) => never): DatasetProject {
+  const project = record(value, where, ['name', 'description', 'tasks', 'dependencies'], fail);
+  const name = text(project.name, `${where}.name`, fail);
+  if (!Array.isArray(project.tasks)) fail(`${where}.tasks는 목록이어야 합니다`);
+  const tasks = (project.tasks as unknown[]).map((item, position): DatasetTask => {
+    const at = `${where}.tasks[${position}]`;
+    const task = record(
+      item,
+      at,
+      template ? ['key', 'title', 'parent', 'description', 'confluenceUrl'] : ['key', 'title', 'status', 'parent', 'description', 'jiraUrl', 'confluenceUrl'],
+      fail,
+    );
+    const status = task.status;
+    if (status !== undefined && !(TASK_STATUSES as readonly unknown[]).includes(status)) {
+      fail(`${at}.status는 ${TASK_STATUSES.join(', ')} 중 하나여야 합니다`);
     }
-    const dependencies = (project.dependencies ?? []) as unknown;
-    if (!Array.isArray(dependencies)) fail(`${where}.dependencies는 목록이어야 합니다`);
-    const pairs = (dependencies as unknown[]).map((pair, position): [string, string] => {
-      const ok = Array.isArray(pair) && pair.length === 2 && pair.every((item) => typeof item === 'string');
-      if (!ok) fail(`${where}.dependencies[${position}]은(는) ["선행 key", "후속 key"] 모양이어야 합니다`);
-      for (const item of pair as string[]) if (!keys.has(item)) fail(`‘${name}’의 연결에 없는 공정 key가 있습니다: ${item}`);
-      return pair as [string, string];
-    });
-    return { name, description: optionalText(project.description, `${where}.description`, fail), tasks: parentsFirst(tasks, name, fail), dependencies: pairs };
+    return {
+      key: text(task.key, `${at}.key`, fail),
+      title: text(task.title, `${at}.title`, fail),
+      status: status as TaskStatus | undefined,
+      parent: optionalText(task.parent, `${at}.parent`, fail),
+      description: optionalText(task.description, `${at}.description`, fail),
+      jiraUrl: optionalText(task.jiraUrl, `${at}.jiraUrl`, fail),
+      confluenceUrl: optionalText(task.confluenceUrl, `${at}.confluenceUrl`, fail),
+    };
   });
-  return { label, order, projects };
+  const keys = new Set<string>();
+  for (const task of tasks) {
+    if (keys.has(task.key)) fail(`‘${name}’에 key가 ${task.key}인 공정이 둘 이상 있습니다`);
+    keys.add(task.key);
+  }
+  const dependencies = (project.dependencies ?? []) as unknown;
+  if (!Array.isArray(dependencies)) fail(`${where}.dependencies는 목록이어야 합니다`);
+  const pairs = (dependencies as unknown[]).map((pair, position): [string, string] => {
+    const ok = Array.isArray(pair) && pair.length === 2 && pair.every((item) => typeof item === 'string');
+    if (!ok) fail(`${where}.dependencies[${position}]은(는) ["선행 key", "후속 key"] 모양이어야 합니다`);
+    for (const item of pair as string[]) if (!keys.has(item)) fail(`‘${name}’의 연결에 없는 공정 key가 있습니다: ${item}`);
+    return pair as [string, string];
+  });
+  return { name, description: optionalText(project.description, `${where}.description`, fail), tasks: parentsFirst(tasks, name, fail), dependencies: pairs };
 }
 
 /** 상위 공정을 하위보다 먼저 만들 수 있게 정렬한다. 나머지 순서는 파일 순서 그대로 */

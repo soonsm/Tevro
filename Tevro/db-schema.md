@@ -1,8 +1,8 @@
 # Tevro — 테이블 설계서(ERD)
 
 - 문서 상태: MVP 코드 기준 설명서. 스키마의 원본은 코드(`src/server/store.ts`의 `SCHEMA`와 `MIGRATIONS`)이며, 스키마를 바꾸면 이 문서도 함께 고친다.
-- 스키마 버전: 3(사용자·인증 추가). 버전 이력은 7장
-- 작성 기준일: 2026-10-25, 계정 테이블 추가 2026-10-31
+- 스키마 버전: 4(템플릿 추가). 버전 이력은 7장
+- 작성 기준일: 2026-10-25, 계정 테이블 추가 2026-10-31, 템플릿 컬럼 추가 2026-10-31
 - 대상 DB: SQLite 3.53(`better-sqlite3`에 포함), 파일 하나(`data/tevro.db`, 위치는 `TEVRO_DATA_DIR`로 바꿈)
 - 관련 문서: [ADR-0003 저장소와 동시 수정 모델](./adr/0003-storage-and-concurrency.md), [ADR-0004 사용자 인증·권한](./adr/0004-authentication-authorization.md), [ADR-0005 식별자 체계와 삭제 정책](./adr/0005-identifiers-and-deletion.md), [제품 요구사항 §6.9 공정 계층, §7](./product-requirements.md)
 
@@ -128,7 +128,16 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 | `name` | TEXT | N | | | 프로젝트 이름. 앞뒤 공백을 지우고 1~100자 |
 | `description` | TEXT | N | `''` | | 설명, 최대 10,000자. MVP 화면에는 입력란이 없고 API로만 넣는다 |
 | `created_at` | TEXT | N | | | 만든 시각. ISO 8601 UTC 문자열(예: `2026-10-25T07:14:17.026Z`) |
-| `updated_at` | TEXT | N | | | 고친 시각. MVP에는 프로젝트 수정 기능이 없어 만든 시각과 같다 |
+| `updated_at` | TEXT | N | | | 고친 시각. 프로젝트는 수정 기능이 없어 만든 시각과 같다. 템플릿은 공정·연결·이름을 고칠 때 갱신 |
+| `kind` | TEXT | N | `'project'` | CHECK | `project`(프로젝트) 또는 `template`(템플릿). 템플릿도 공정·연결 테이블을 그대로 써서 편집·검증이 같다(F-T03). 템플릿 ID 접두사는 `tpl_` |
+| `owner_user_id` | TEXT | Y | NULL | FK | 템플릿을 만든 사람. `users.id`, ON DELETE SET NULL. 개인 템플릿은 이 사람(과 관리자)만 보고 고친다 |
+| `official` | INTEGER | N | 0 | CHECK | 1이면 회사 템플릿. 모두가 보고 관리자만 고친다 |
+| `template_version` | INTEGER | N | 1 | | 템플릿의 판. 고친 뒤 처음으로 프로젝트를 만들 때 하나 오른다(같은 판 = 같은 정의) |
+| `template_dirty` | INTEGER | N | 0 | CHECK | 지금 판 뒤로 공정·연결·이름·설명을 고쳤는지 |
+| `source_template_id` | TEXT | Y | NULL | | 이 프로젝트를 만든 템플릿. 템플릿을 지워도 남게 외래 키를 두지 않는다(F-T09, AC-22) |
+| `source_template_name`, `source_template_version`, `source_applied_at` | TEXT, INTEGER, TEXT | Y | NULL | | 적용할 때의 템플릿 이름·판과 시각 |
+
+인덱스: `projects_by_kind (kind)`. 템플릿으로 프로젝트를 만들면 공정·포함관계·연결을 새 ID로 복사하고, 진행 상태는 `todo`, `jira_url`은 NULL로 두며 `confluence_url`은 복사한다(F-T05, F-T06). 템플릿 공정에는 `todo` 밖의 상태와 Jira 링크를 넣을 수 없다(서버 검사).
 
 ### 4.2 tasks — 공정
 
@@ -294,6 +303,7 @@ API 응답에는 있지만 테이블에는 없는 값이다. 저장하면 상태
 | 2 | `tasks.parent_id`, 자기 자신 금지 CHECK, 상위 복합 외래 키, `tasks_by_parent` 인덱스 | 복합 외래 키는 `ALTER TABLE`로 더할 수 없어, SQLite 문서의 12단계 절차대로 `tasks`를 새로 만들어 옮긴다(외래 키 검사를 끈 채로 새 표 생성 → rowid까지 복사 → 옛 표 삭제 → 이름 바꾸기 → 인덱스 재생성 → 외래 키 확인). 기존 공정은 모두 최상위(`parent_id` NULL)가 된다 |
 
 | 3 | `users`, `auth_identities`, `sessions`, `access_tokens`와 인덱스 | 새 테이블만 만든다. 기존 데이터는 그대로이고 사용자는 0명이라, 올린 뒤 서버 관리 명령으로 첫 관리자를 만든다 |
+| 4 | `projects`의 `kind`, `owner_user_id`, `official`, `template_version`, `template_dirty`, `source_*` 컬럼과 `projects_by_kind` 인덱스 | `ALTER TABLE ADD COLUMN`. 기존 행은 모두 프로젝트(`kind = 'project'`)이고 출처가 없다 |
 
 - 새 단계를 더할 때는 `SCHEMA`(새 DB용)와 `MIGRATIONS`(올리기용)를 함께 고치고, 한 번 배포한 단계는 고치지 않는다. `test/migration.test.ts`가 예전 DB를 올린 결과와 새로 만든 DB의 구조가 같은지 확인한다.
 - 백업 기능은 아직 없다. 서버를 멈춘 뒤 `data` 폴더를 통째로 복사하면 된다.

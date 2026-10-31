@@ -19,6 +19,7 @@ interface Props {
  * 위 층으로 돌아가는 버튼(Esc도 같음). 줄바꿈하지 않고, 길면 옆으로 늘어난다.
  */
 export function LevelBar({ graph, levelId, onOpenLevel, onShowTask, onFocusTask }: Props) {
+  const template = graph.project.kind === 'template';
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
   const owner = byId.get(levelId);
   if (!owner) return null;
@@ -60,11 +61,20 @@ export function LevelBar({ graph, levelId, onOpenLevel, onShowTask, onFocusTask 
           </li>
         </ol>
       </nav>
-      <StatusChip status={owner.status} />
-      <span className="levelbar__count" title="완료된 하위 공정 / 전체 하위 공정">
-        <StackIcon />
-        {owner.doneChildCount}/{owner.childCount}
-      </span>
+      {template ? (
+        <span className="levelbar__count" title="하위 공정 수">
+          <StackIcon />
+          {owner.childCount}
+        </span>
+      ) : (
+        <>
+          <StatusChip status={owner.status} />
+          <span className="levelbar__count" title="완료된 하위 공정 / 전체 하위 공정">
+            <StackIcon />
+            {owner.doneChildCount}/{owner.childCount}
+          </span>
+        </>
+      )}
       {inherited.length > 0 && (
         <div className="levelbar__inherited">
           <span className="field-label">이 층 전체의 선행</span>
@@ -82,7 +92,7 @@ export function LevelBar({ graph, levelId, onOpenLevel, onShowTask, onFocusTask 
                   >
                     {predecessor.title}
                   </button>
-                  <StatusChip status={predecessor.status} />
+                  {!template && <StatusChip status={predecessor.status} />}
                 </li>
               );
             })}

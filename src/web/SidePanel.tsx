@@ -5,6 +5,7 @@ import {
   TASK_STATUSES,
   ancestorIds,
   hasPrerequisites,
+  treeOrder,
   isHttpUrl,
   type Edge,
   type TaskStatus,
@@ -44,7 +45,12 @@ interface Props {
 
 export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdateTask, onMoveTask, onDeleteTask, onDeleteEdge, readOnly = false }: Props) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
-  let content = <Overview graph={graph} onFocusTask={onFocusTask} />;
+  const template = graph.project.kind === 'template';
+  let content = template ? (
+    <TemplateOverview graph={graph} onFocusTask={onFocusTask} readOnly={readOnly} />
+  ) : (
+    <Overview graph={graph} onFocusTask={onFocusTask} />
+  );
   if (selection?.kind === 'task' && byId.has(selection.id)) {
     const task = byId.get(selection.id)!;
     content = (
@@ -61,6 +67,7 @@ export function SidePanel({ graph, selection, levelId, onFocusTask, onOpenLevel,
         onMove={onMoveTask}
         onDelete={onDeleteTask}
         readOnly={readOnly}
+        template={template}
       />
     );
   } else if (selection?.kind === 'edge' && byId.has(selection.from) && byId.has(selection.to)) {
@@ -79,6 +86,40 @@ function parentPath(tasks: TaskDto[], byId: Map<string, TaskDto>, taskId: string
     .join(' › ');
 }
 
+/** 템플릿의 개요: 진행 상태 대신 공정 구조와 출처 규칙을 보여 준다. */
+function TemplateOverview({ graph, onFocusTask, readOnly }: { graph: GraphDto; onFocusTask: Props['onFocusTask']; readOnly: boolean }) {
+  return (
+    <>
+      <section className="panel-section">
+        <h2 className="panel-heading is-large">템플릿 공정 {graph.tasks.length}</h2>
+        {graph.project.description && <p className="panel-note">{graph.project.description}</p>}
+        {graph.tasks.length === 0 ? (
+          <p className="panel-note">아직 공정이 없습니다.{readOnly ? '' : ' 위 입력란에 제목을 쓰고 Enter를 누르세요.'}</p>
+        ) : (
+          <ul className="template-tree">
+            {treeOrder(graph.tasks).map(({ task, depth }) => (
+              <li key={task.id} style={{ paddingLeft: depth * 16 }}>
+                <button type="button" className="link-button" onClick={() => onFocusTask(task.id)}>
+                  {task.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section className="panel-section help">
+        <h2 className="panel-heading">템플릿으로 프로젝트를 만들면</h2>
+        <ul>
+          <li>공정·연결·하위 구조가 새 ID로 복사됩니다</li>
+          <li>진행 상태는 모두 미착수로 시작합니다</li>
+          <li>Confluence 링크는 복사하고 Jira 링크는 비웁니다</li>
+          <li>템플릿을 나중에 고쳐도 이미 만든 프로젝트는 바뀌지 않습니다</li>
+        </ul>
+      </section>
+    </>
+  );
+}
+
 function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props['onFocusTask'] }) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
   // 상태 요약과 같이 말단 공정 기준으로 본다(F-H09). 상위 공정의 상태는 하위로 드러난다.
@@ -89,6 +130,11 @@ function Overview({ graph, onFocusTask }: { graph: GraphDto; onFocusTask: Props[
   ];
   return (
     <>
+      {graph.project.source && (
+        <p className="panel-note source-note">
+          템플릿 ‘{graph.project.source.name}’ {graph.project.source.version}판으로 만든 프로젝트 ({graph.project.source.appliedAt.slice(0, 10)})
+        </p>
+      )}
       <section className="panel-section">
         <h2 className="panel-heading is-large">남은 공정 {remaining.length}</h2>
         {graph.tasks.length === 0 && <p className="panel-note">아직 공정이 없습니다.</p>}
@@ -160,9 +206,11 @@ interface TaskDetailProps {
   onMove: Props['onMoveTask'];
   onDelete: Props['onDeleteTask'];
   readOnly: boolean;
+  /** 템플릿 공정: 진행 상태·선행 충족·Jira 링크가 없다 */
+  template: boolean;
 }
 
-function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete, readOnly }: TaskDetailProps) {
+function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete, readOnly, template }: TaskDetailProps) {
   const update = (input: TaskInput) => onUpdate(task.id, input);
   const path = parentPath(graph.tasks, byId, task.id);
   const children = graph.tasks.filter((item) => item.parentId === task.id).map((item) => item.id);
@@ -185,6 +233,9 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
         )}
       </div>
 
+      {template ? (
+        <p className="panel-note is-small">템플릿 공정에는 진행 상태가 없습니다. 이 템플릿으로 만든 프로젝트에서는 모두 미착수로 시작합니다.</p>
+      ) : (
       <fieldset className="status-field">
         <legend className="field-label">실행 상태</legend>
         <div className="segmented">
@@ -212,11 +263,13 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           <p className="panel-note is-small">하위 공정이 모두 완료되면 자동으로 완료됩니다. 직접 바꿀 수도 있습니다.</p>
         )}
       </fieldset>
+      )}
 
       <section className="panel-section">
         <div className="panel-heading-row">
           <h2 className="panel-heading">선행 조건</h2>
-          {hasPrerequisites(task) &&
+          {!template &&
+            hasPrerequisites(task) &&
             (task.prerequisitesMet ? (
               <span className="chip is-met">
                 <CheckIcon />
@@ -233,7 +286,7 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           <p className="panel-note">선행 공정이 없습니다.</p>
         ) : (
           <>
-            {!task.prerequisitesMet && (
+            {!template && !task.prerequisitesMet && (
               <p className="panel-note">
                 완료되지 않은 선행 공정이 {task.unmetPrerequisiteIds.length}개 있습니다. 그래도 상태는 바꿀 수 있습니다.
               </p>
@@ -313,6 +366,7 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
 
       <section className="panel-section">
         <h2 className="panel-heading">링크</h2>
+        {!template && (
         <LinkField
           label="Jira"
           url={task.jiraUrl}
@@ -321,6 +375,7 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           readOnly={readOnly}
           onSave={(jiraUrl) => update({ jiraUrl })}
         />
+        )}
         <LinkField
           label="Confluence"
           url={task.confluenceUrl}
@@ -329,7 +384,11 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           readOnly={readOnly}
           onSave={(confluenceUrl) => update({ confluenceUrl })}
         />
-        <p className="panel-note is-small">링크만 저장합니다. Jira 상태는 가져오지 않으며, 실행 상태는 Tevro에서 관리합니다.</p>
+        <p className="panel-note is-small">
+          {template
+            ? 'Confluence 링크는 이 템플릿으로 만든 프로젝트에 그대로 복사됩니다. Jira 이슈는 프로젝트마다 달라 템플릿에는 넣지 않습니다.'
+            : '링크만 저장합니다. Jira 상태는 가져오지 않으며, 실행 상태는 Tevro에서 관리합니다.'}
+        </p>
       </section>
 
       <DescriptionField task={task} readOnly={readOnly} onSave={(description) => update({ description })} />

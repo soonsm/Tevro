@@ -1,14 +1,15 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { STATUS_LABELS, TRANSITION_LABELS, type Edge, type Summary } from '../shared/domain.ts';
-import type { AutoTransition, GraphDto, ProjectDto, TaskDto, TaskInput, TrialStatus, UserDto } from '../shared/types.ts';
+import type { AutoTransition, GraphDto, ProjectDto, TaskDto, TaskInput, TemplateSummaryDto, TrialStatus, UserDto } from '../shared/types.ts';
 import { AccountMenu, LoginScreen } from './account.tsx';
 import { ApiFailure, api, whenSessionEnds } from './api.ts';
-import { DeleteTaskDialog, MoveTaskDialog, NewProjectDialog, SwitchDatasetDialog } from './dialogs.tsx';
+import { DeleteTaskDialog, MoveTaskDialog, SwitchDatasetDialog } from './dialogs.tsx';
 import { GraphCanvas } from './GraphCanvas.tsx';
 import { AlertIcon, CloseIcon, InfoIcon, LayoutIcon, PlusIcon, RefreshIcon, StatusChip } from './icons.tsx';
 import { LevelBar } from './LevelBar.tsx';
 import { SidePanel } from './SidePanel.tsx';
+import { DeleteTemplateDialog, NewProjectDialog, SaveTemplateDialog, TemplateBar, TemplatesDialog, groupTemplates } from './templates.tsx';
 import { TrialBanner } from './TrialBanner.tsx';
 
 export type Selection = { kind: 'task'; id: string } | { kind: 'edge'; from: string; to: string } | null;
@@ -22,7 +23,12 @@ interface Notice {
 }
 
 type Dialog =
-  | { kind: 'new-project' }
+  | { kind: 'new-project'; templateId?: string }
+  | { kind: 'templates' }
+  /** 새 템플릿(sourceId 없음), 프로젝트를 템플릿으로 저장, 템플릿을 내 템플릿으로 복사 */
+  | { kind: 'save-template'; sourceId?: string; sourceName?: string; copy?: boolean }
+  | { kind: 'template-info'; template: TemplateSummaryDto }
+  | { kind: 'delete-template'; template: TemplateSummaryDto }
   | { kind: 'delete-task'; task: TaskDto }
   | { kind: 'move-task'; task: TaskDto }
   | { kind: 'switch-dataset'; dataset: string; label: string }
@@ -106,6 +112,7 @@ export function App() {
 function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => void }) {
   const readOnly = user?.role === 'viewer';
   const [projects, setProjects] = useState<ProjectDto[] | null>(null);
+  const [templates, setTemplates] = useState<TemplateSummaryDto[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [graph, setGraph] = useState<GraphDto | null>(null);
   /** 보고 있는 층의 상위 공정. null이면 최상위 층(F-H07: 한 번에 한 층) */
@@ -157,11 +164,15 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
 
   async function loadProjects(prefer?: string) {
     try {
-      const list = await api.listProjects();
+      const [list, templateList] = await Promise.all([api.listProjects(), api.listTemplates()]);
       setProjects(list);
+      setTemplates(templateList);
+      // 주소의 ?project=에는 템플릿 ID도 올 수 있다.
       setProjectId((current) => {
         const wanted = prefer ?? current ?? new URLSearchParams(location.search).get('project');
-        return list.find((item) => item.id === wanted)?.id ?? list[0]?.id ?? null;
+        return (
+          list.find((item) => item.id === wanted)?.id ?? templateList.find((item) => item.id === wanted)?.id ?? list[0]?.id ?? null
+        );
       });
     } catch (error) {
       showError('프로젝트 목록을 불러오지 못했습니다', error);
@@ -282,6 +293,36 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
     }
   }
 
+  /** 템플릿 작업을 하고 목록을 다시 읽은 뒤 open이 있으면 그 프로젝트·템플릿으로 간다. */
+  async function templateAction(heading: string, action: () => Promise<ProjectDto | void>, done?: string) {
+    setDialog(null);
+    try {
+      const result = await action();
+      setNotice(done ? { tone: 'info', heading: done, detail: result ? `‘${result.name}’` : '' } : null);
+      await loadProjects(result ? result.id : undefined);
+      if (result && result.id === currentProject.current) await reloadGraph();
+    } catch (error) {
+      showError(heading, error);
+    }
+  }
+
+  function createFromTemplate(templateId: string, name: string) {
+    void templateAction('템플릿으로 프로젝트를 만들지 못했습니다', () => api.instantiate(templateId, name));
+  }
+
+  async function deleteTemplate(template: TemplateSummaryDto) {
+    setDialog(null);
+    try {
+      await api.deleteTemplate(template.id);
+      setNotice({ tone: 'info', heading: '템플릿을 삭제했습니다', detail: `‘${template.name}’. 이 템플릿으로 만든 프로젝트는 그대로입니다.` });
+      const leaving = currentProject.current === template.id;
+      if (leaving) setProjectId(null);
+      await loadProjects(leaving ? (projects?.[0]?.id ?? undefined) : undefined);
+    } catch (error) {
+      showError('템플릿을 삭제하지 못했습니다', error);
+    }
+  }
+
   /** 체험 모드: 고른 예시 데이터를 처음 상태로 불러온다. 이 창에서 바꾼 내용이 있으면 먼저 확인한다. */
   async function chooseDataset(dataset: string) {
     const label = trial?.datasets.find((item) => item.key === dataset)?.label ?? dataset;
@@ -303,9 +344,10 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
     setDialog(null);
     try {
       const status = await api.resetTrial(dataset);
-      const list = await api.listProjects();
+      const [list, templateList] = await Promise.all([api.listProjects(), api.listTemplates()]);
       setTrial(status);
       setProjects(list);
+      setTemplates(templateList);
       setNotice(null);
       setSelection(null);
       setLevelId(null);
@@ -325,6 +367,16 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
   }
 
   const levelTask = levelId ? graph?.tasks.find((task) => task.id === levelId) : undefined;
+  // 템플릿을 보고 있으면 그 템플릿 정보. 고칠 수 없는 템플릿(다른 사람 것, 관리자가 아닐 때 회사 템플릿)은 보기 전용이다.
+  const currentTemplate = graph?.project.kind === 'template' ? templates.find((item) => item.id === graph.project.id) : undefined;
+  const graphReadOnly = graph?.project.kind === 'template' ? !currentTemplate?.canEdit : readOnly;
+  const readOnlyReason =
+    graph?.project.kind !== 'template'
+      ? '열람자 계정이라 보기만 할 수 있습니다.'
+      : currentTemplate?.template.official
+        ? '회사 템플릿은 관리자만 고칩니다. 고쳐 쓰려면 위 띠의 [내 템플릿으로 복사]를 누르세요.'
+        : '다른 사람의 템플릿이라 보기만 할 수 있습니다.';
+  const grouped = groupTemplates(templates, user);
 
   // 하위 층에서 Esc를 누르면 위 층으로 돌아간다(입력 중이거나 대화상자가 열려 있을 때는 제외).
   const levelParent = levelTask ? levelTask.parentId : undefined;
@@ -346,7 +398,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
       {trial && <TrialBanner trial={trial} onChoose={(dataset) => void chooseDataset(dataset)} />}
       <header className="topbar">
         <span className="brand">Tevro</span>
-        {projects && projects.length > 0 && (
+        {projects && projects.length + templates.length > 0 && (
           <div className="project-picker">
             <label className="field-label" htmlFor="project-select">
               프로젝트
@@ -357,21 +409,55 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
               value={projectId ?? ''}
               onChange={(event) => setProjectId(event.target.value)}
             >
-              {projects.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
+              {!projectId && <option value="">프로젝트를 고르세요</option>}
+              <optgroup label="프로젝트">
+                {projects.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                    {item.source ? ` · ${item.source.name} ${item.source.version}판` : ''}
+                  </option>
+                ))}
+              </optgroup>
+              {[
+                { label: '회사 템플릿', items: grouped.company },
+                { label: '내 템플릿', items: grouped.mine },
+                { label: '다른 사람의 템플릿', items: grouped.others },
+              ]
+                .filter((group) => group.items.length > 0)
+                .map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        [템플릿] {item.name} · {item.template.version}판
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
             </select>
             {!readOnly && (
               <button type="button" className="button" onClick={() => setDialog({ kind: 'new-project' })}>
                 <PlusIcon />새 프로젝트
               </button>
             )}
+            <button type="button" className="button" onClick={() => setDialog({ kind: 'templates' })}>
+              템플릿
+            </button>
           </div>
         )}
         <div className="topbar__end">
-          {graph && <SummaryChips summary={graph.summary} />}
+          {graph &&
+            (graph.project.kind === 'template' ? (
+              <div className="summary">
+                <span>
+                  공정 <b>{graph.tasks.length}</b>
+                </span>
+                <span>
+                  연결 <b>{graph.dependencies.length}</b>
+                </span>
+              </div>
+            ) : (
+              <SummaryChips summary={graph.summary} />
+            ))}
           <button type="button" className="button" title="다른 사람이나 CLI가 바꾼 내용을 불러옵니다" onClick={refresh}>
             <RefreshIcon />
             새로고침
@@ -401,7 +487,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
             <p className="panel-note">불러오는 중…</p>
           )}
         </div>
-      ) : projects.length === 0 ? (
+      ) : projects.length === 0 && !projectId ? (
         readOnly ? (
           <div className="center-message">
             <div className="message-card">
@@ -410,13 +496,36 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
             </div>
           </div>
         ) : (
-          <FirstProject notice={notice} onCreate={createProject} />
+          <FirstProject
+            notice={notice}
+            onCreate={createProject}
+            onFromTemplate={templates.length > 0 ? () => setDialog({ kind: 'new-project' }) : undefined}
+          />
         )
       ) : graph ? (
+        <>
+        {currentTemplate && (
+          <TemplateBar
+            template={currentTemplate}
+            user={user}
+            onNewProject={() => setDialog({ kind: 'new-project', templateId: currentTemplate.id })}
+            onCopy={() => setDialog({ kind: 'save-template', sourceId: currentTemplate.id, sourceName: currentTemplate.name, copy: true })}
+            onEditInfo={() => setDialog({ kind: 'template-info', template: currentTemplate })}
+            onToggleOfficial={() =>
+              void templateAction(
+                '회사 템플릿 지정을 바꾸지 못했습니다',
+                () => api.updateTemplate(currentTemplate.id, { official: !currentTemplate.template.official }),
+                currentTemplate.template.official ? '회사 템플릿에서 해제했습니다' : '회사 템플릿으로 지정했습니다',
+              )
+            }
+            onDelete={() => setDialog({ kind: 'delete-template', template: currentTemplate })}
+          />
+        )}
         <div className="workspace">
           <main className="canvas-column">
             <Toolbar
-              readOnly={readOnly}
+              readOnly={graphReadOnly}
+              readOnlyReason={readOnlyReason}
               levelTitle={levelTask?.title ?? null}
               onAdd={addTask}
               onArrange={() => setLayoutRequest((count) => count + 1)}
@@ -442,12 +551,12 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
                   onOpen={openLevel}
                   onConnect={addDependency}
                   onDeleteEdge={removeDependency}
-                  readOnly={readOnly}
+                  readOnly={graphReadOnly}
                 />
               </ReactFlowProvider>
               {levelTaskCount === 0 && (
                 <p className="canvas-empty">
-                  {readOnly
+                  {graphReadOnly
                     ? '이 층에는 공정이 없습니다.'
                     : levelTask
                     ? `‘${levelTask.title}’ 안에 하위 공정이 없습니다. 위 입력란에 제목을 쓰고 Enter를 누르세요.`
@@ -468,16 +577,81 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
             onMoveTask={(task) => setDialog({ kind: 'move-task', task })}
             onDeleteTask={(task) => setDialog({ kind: 'delete-task', task })}
             onDeleteEdge={removeDependency}
-            readOnly={readOnly}
+            readOnly={graphReadOnly}
           />
         </div>
+        </>
       ) : (
         <div className="center-message">
           {notice ? <NoticeBanner notice={notice} onClose={() => setNotice(null)} /> : <p className="panel-note">불러오는 중…</p>}
         </div>
       )}
 
-      {dialog?.kind === 'new-project' && <NewProjectDialog onCancel={() => setDialog(null)} onCreate={createProject} />}
+      {dialog?.kind === 'new-project' && (
+        <NewProjectDialog
+          templates={templates}
+          user={user}
+          initialTemplateId={dialog.templateId}
+          onCancel={() => setDialog(null)}
+          onCreateBlank={(name) => void createProject(name)}
+          onCreateFromTemplate={createFromTemplate}
+        />
+      )}
+      {dialog?.kind === 'templates' && (
+        <TemplatesDialog
+          templates={templates}
+          user={user}
+          currentProject={graph?.project.kind === 'project' ? graph.project : null}
+          onClose={() => setDialog(null)}
+          onOpen={(id) => {
+            setDialog(null);
+            setProjectId(id);
+          }}
+          onNew={() => setDialog({ kind: 'save-template' })}
+          onSaveProject={() => graph && setDialog({ kind: 'save-template', sourceId: graph.project.id, sourceName: graph.project.name })}
+          onCopy={(item) => setDialog({ kind: 'save-template', sourceId: item.id, sourceName: item.name, copy: true })}
+          onDelete={(item) => setDialog({ kind: 'delete-template', template: item })}
+        />
+      )}
+      {dialog?.kind === 'save-template' && (
+        <SaveTemplateDialog
+          heading={dialog.copy ? '내 템플릿으로 복사' : dialog.sourceId ? '템플릿으로 저장' : '새 템플릿'}
+          submitLabel={dialog.copy ? '복사' : dialog.sourceId ? '저장' : '만들기'}
+          initialName={dialog.copy ? `${dialog.sourceName} (내 수정본)` : (dialog.sourceName ?? '')}
+          note={
+            dialog.copy
+              ? '공정·연결·하위 구조를 내 템플릿으로 복사합니다. 복사본을 고쳐도 원래 템플릿은 바뀌지 않습니다.'
+              : dialog.sourceId
+                ? '공정·연결·하위 구조와 Confluence 링크를 저장합니다. 진행 상태와 Jira 링크는 저장하지 않습니다.'
+                : '빈 템플릿을 만들고 프로젝트처럼 공정을 추가합니다.'
+          }
+          canMakeOfficial={user?.role === 'admin'}
+          onCancel={() => setDialog(null)}
+          onSave={(input) =>
+            void templateAction(
+              '템플릿을 저장하지 못했습니다',
+              () => (dialog.sourceId ? api.saveAsTemplate(dialog.sourceId, input) : api.createTemplate(input)),
+              dialog.copy ? '내 템플릿으로 복사했습니다' : '템플릿을 만들었습니다',
+            )
+          }
+        />
+      )}
+      {dialog?.kind === 'template-info' && (
+        <SaveTemplateDialog
+          heading="템플릿 이름·설명"
+          submitLabel="저장"
+          initialName={dialog.template.name}
+          initialDescription={dialog.template.description}
+          canMakeOfficial={false}
+          onCancel={() => setDialog(null)}
+          onSave={({ name, description }) =>
+            void templateAction('템플릿을 고치지 못했습니다', () => api.updateTemplate(dialog.template.id, { name, description }))
+          }
+        />
+      )}
+      {dialog?.kind === 'delete-template' && (
+        <DeleteTemplateDialog template={dialog.template} onCancel={() => setDialog(null)} onConfirm={() => void deleteTemplate(dialog.template)} />
+      )}
       {dialog?.kind === 'switch-dataset' && (
         <SwitchDatasetDialog
           label={dialog.label}
@@ -519,15 +693,16 @@ function SummaryChips({ summary }: { summary: Summary }) {
 }
 
 interface ToolbarProps {
-  /** 열람자: 공정 추가 입력란 대신 보기 전용임을 알린다 */
+  /** 보기 전용(열람자, 고칠 수 없는 템플릿): 공정 추가 입력란 대신 그 까닭을 알린다 */
   readOnly: boolean;
+  readOnlyReason: string;
   /** 하위 층에 있으면 그 상위 공정의 제목. 새 공정은 그 아래에 들어간다 */
   levelTitle: string | null;
   onAdd: (title: string) => Promise<boolean>;
   onArrange: () => void;
 }
 
-function Toolbar({ readOnly, levelTitle, onAdd, onArrange }: ToolbarProps) {
+function Toolbar({ readOnly, readOnlyReason, levelTitle, onAdd, onArrange }: ToolbarProps) {
   const [title, setTitle] = useState('');
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -541,7 +716,7 @@ function Toolbar({ readOnly, levelTitle, onAdd, onArrange }: ToolbarProps) {
           <LayoutIcon />
           자동 정렬
         </button>
-        <span className="toolbar__hint">열람자 계정이라 보기만 할 수 있습니다.</span>
+        <span className="toolbar__hint">{readOnlyReason}</span>
       </div>
     );
   }
@@ -587,7 +762,7 @@ function NoticeBanner({ notice, onClose }: { notice: Notice; onClose: () => void
   );
 }
 
-function FirstProject({ notice, onCreate }: { notice: Notice | null; onCreate: (name: string) => void }) {
+function FirstProject({ notice, onCreate, onFromTemplate }: { notice: Notice | null; onCreate: (name: string) => void; onFromTemplate?: () => void }) {
   const [name, setName] = useState('');
   return (
     <div className="center-message">
@@ -615,6 +790,11 @@ function FirstProject({ notice, onCreate }: { notice: Notice | null; onCreate: (
         <button type="submit" className="button primary" disabled={!name.trim()}>
           프로젝트 만들기
         </button>
+        {onFromTemplate && (
+          <button type="button" className="button" onClick={onFromTemplate}>
+            템플릿에서 시작
+          </button>
+        )}
         <p className="panel-note is-small">
           예시 프로젝트를 CLI로 만들려면 서버를 켠 채로 다른 터미널에서 <code>npm run demo</code>
         </p>

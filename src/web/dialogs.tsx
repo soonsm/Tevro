@@ -3,7 +3,7 @@ import { brokenPaths, descendantIds, treeOrder, type Edge } from '../shared/doma
 import type { GraphDto, TaskDto } from '../shared/types.ts';
 import { WarnIcon } from './icons.tsx';
 
-export function Modal({ labelledBy, onClose, children }: { labelledBy: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ labelledBy, onClose, children, wide = false }: { labelledBy: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = ref.current!;
@@ -13,7 +13,7 @@ export function Modal({ labelledBy, onClose, children }: { labelledBy: string; o
   return (
     <dialog
       ref={ref}
-      className="modal"
+      className={`modal${wide ? ' is-wide' : ''}`}
       aria-labelledby={labelledBy}
       onCancel={(event) => {
         event.preventDefault();
@@ -184,42 +184,3 @@ export function SwitchDatasetDialog({ label, onCancel, onConfirm }: { label: str
   );
 }
 
-export function NewProjectDialog({ onCancel, onCreate }: { onCancel: () => void; onCreate: (name: string) => void }) {
-  const [name, setName] = useState('');
-  return (
-    <Modal labelledBy="new-project-title" onClose={onCancel}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (name.trim()) onCreate(name.trim());
-        }}
-      >
-        <h2 id="new-project-title" className="modal__title">
-          새 프로젝트
-        </h2>
-        <div className="panel-section is-tight">
-          <label className="field-label" htmlFor="new-project-name">
-            프로젝트 이름
-          </label>
-          <input
-            id="new-project-name"
-            className="input"
-            value={name}
-            maxLength={100}
-            placeholder="예: 신규 서비스 준비"
-            autoFocus
-            onChange={(event) => setName(event.target.value)}
-          />
-        </div>
-        <div className="modal__actions">
-          <button type="button" className="button" onClick={onCancel}>
-            취소
-          </button>
-          <button type="submit" className="button primary" disabled={!name.trim()}>
-            만들기
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}

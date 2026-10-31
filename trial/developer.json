@@ -6,28 +6,49 @@
       "name": "신규 서비스 준비",
       "tasks": [
         { "key": "repo", "title": "저장소 준비", "status": "done" },
-        {
-          "key": "ci",
-          "title": "CI 구성",
-          "status": "in-progress",
-          "confluenceUrl": "https://wiki.example.com/display/SVC/CI+구성+절차"
-        },
+        { "key": "ci", "title": "CI 구성", "status": "in-progress", "confluenceUrl": "https://wiki.example.com/display/SVC/CI+구성+절차" },
         { "key": "env", "title": "실행환경 구성", "status": "in-progress" },
         { "key": "db", "title": "데이터베이스 작업", "status": "done" },
         { "key": "dev", "title": "애플리케이션 개발", "status": "todo" },
         { "key": "online", "title": "온라인 거래 개발", "status": "done", "parent": "dev" },
         { "key": "batch", "title": "배치 개발", "status": "in-progress", "parent": "dev" },
         { "key": "review", "title": "개발 결과 검토", "status": "todo", "parent": "dev" },
-        {
-          "key": "gitops",
-          "title": "GitOps 설정",
-          "status": "todo",
-          "jiraUrl": "https://jira.example.com/browse/SVC-142",
-          "confluenceUrl": "https://wiki.example.com/display/SVC/GitOps+설정+절차"
-        },
+        { "key": "gitops", "title": "GitOps 설정", "status": "todo", "jiraUrl": "https://jira.example.com/browse/SVC-142", "confluenceUrl": "https://wiki.example.com/display/SVC/GitOps+설정+절차" },
         { "key": "verify", "title": "통합 검증", "status": "todo", "jiraUrl": "https://jira.example.com/browse/SVC-143" },
         { "key": "deploy", "title": "배포", "status": "todo" },
         { "key": "docs", "title": "참고 문서 정리", "status": "todo" }
+      ],
+      "dependencies": [
+        ["repo", "ci"],
+        ["ci", "gitops"],
+        ["env", "gitops"],
+        ["gitops", "verify"],
+        ["db", "verify"],
+        ["verify", "deploy"],
+        ["repo", "dev"],
+        ["dev", "verify"],
+        ["online", "review"],
+        ["batch", "review"]
+      ]
+    }
+  ],
+  "templates": [
+    {
+      "name": "표준 서비스 준비",
+      "description": "저장소 준비부터 배포까지, 신규 서비스를 열 때 거치는 표준 공정",
+      "tasks": [
+        { "key": "repo", "title": "저장소 준비" },
+        { "key": "ci", "title": "CI 구성", "confluenceUrl": "https://wiki.example.com/display/SVC/CI+구성+절차" },
+        { "key": "env", "title": "실행환경 구성" },
+        { "key": "db", "title": "데이터베이스 작업" },
+        { "key": "dev", "title": "애플리케이션 개발" },
+        { "key": "online", "title": "온라인 거래 개발", "parent": "dev" },
+        { "key": "batch", "title": "배치 개발", "parent": "dev" },
+        { "key": "review", "title": "개발 결과 검토", "parent": "dev" },
+        { "key": "gitops", "title": "GitOps 설정", "confluenceUrl": "https://wiki.example.com/display/SVC/GitOps+설정+절차" },
+        { "key": "verify", "title": "통합 검증" },
+        { "key": "deploy", "title": "배포" },
+        { "key": "docs", "title": "참고 문서 정리" }
       ],
       "dependencies": [
         ["repo", "ci"],

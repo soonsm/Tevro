@@ -27,6 +27,7 @@ import type {
   ProjectDto,
   TaskChangeResult,
   TaskDto,
+  TemplateSummaryDto,
 } from '../shared/types.ts';
 import { ApiError, invalidInput } from './errors.ts';
 import { newId } from './ids.ts';
@@ -40,8 +41,24 @@ type Input = Record<string, unknown>;
  * 1: 첫 MVP. user_version을 쓰지 않아 0으로 남아 있다.
  * 2: 공정 계층(tasks.parent_id)
  * 3: 사용자·로그인 수단·세션·개인 액세스 토큰(ADR-0004)
+ * 4: 템플릿(projects.kind 등)과 프로젝트의 템플릿 출처
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+
+// 템플릿은 공정·연결 테이블을 그대로 쓰도록 projects의 한 종류(kind = 'template')로 둔다. 그래프 편집과 검증이 프로젝트와 같다(F-T03).
+// 출처(source_*)는 템플릿을 지워도 남게 외래 키 없이 이름·판까지 복사해 둔다(F-T09, AC-22).
+const TEMPLATE_COLUMNS = `
+ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project' CHECK (kind IN ('project', 'template'));
+ALTER TABLE projects ADD COLUMN owner_user_id TEXT REFERENCES users (id) ON DELETE SET NULL;
+ALTER TABLE projects ADD COLUMN official INTEGER NOT NULL DEFAULT 0 CHECK (official IN (0, 1));
+ALTER TABLE projects ADD COLUMN template_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE projects ADD COLUMN template_dirty INTEGER NOT NULL DEFAULT 0 CHECK (template_dirty IN (0, 1));
+ALTER TABLE projects ADD COLUMN source_template_id TEXT;
+ALTER TABLE projects ADD COLUMN source_template_name TEXT;
+ALTER TABLE projects ADD COLUMN source_template_version INTEGER;
+ALTER TABLE projects ADD COLUMN source_applied_at TEXT;
+CREATE INDEX projects_by_kind ON projects (kind);
+`;
 
 // 사용자와 로그인 수단을 나눈다. 로컬 비밀번호로 시작해도 나중에 LDAP·SSO 주체를 같은 사용자에 붙일 수 있다(ADR-0004).
 // 세션과 토큰은 비밀값의 해시만 둔다.
@@ -127,7 +144,7 @@ CREATE TABLE dependencies (
   FOREIGN KEY (project_id, from_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE,
   FOREIGN KEY (project_id, to_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE
 );
-${ACCOUNT_TABLES}`;
+${ACCOUNT_TABLES}${TEMPLATE_COLUMNS}`;
 
 /** 예전 DB를 한 단계씩 올리는 SQL. 키는 올린 뒤의 버전이다. 한 번 배포한 단계는 고치지 않고 새 단계를 더한다. */
 const MIGRATIONS: Record<number, string> = {
@@ -156,6 +173,7 @@ CREATE INDEX tasks_by_project ON tasks (project_id);
 CREATE INDEX tasks_by_parent ON tasks (project_id, parent_id);
 `,
   3: ACCOUNT_TABLES,
+  4: TEMPLATE_COLUMNS,
 };
 
 const MAX_LENGTH = { name: 100, title: 200, description: 10_000, url: 2_000, id: 64 };
@@ -166,6 +184,22 @@ interface ProjectRow {
   description: string;
   created_at: string;
   updated_at: string;
+  kind: 'project' | 'template';
+  owner_user_id: string | null;
+  official: number;
+  template_version: number;
+  template_dirty: number;
+  source_template_id: string | null;
+  source_template_name: string | null;
+  source_template_version: number | null;
+  source_applied_at: string | null;
+}
+
+interface TemplateRow extends ProjectRow {
+  owner_name: string | null;
+  task_count: number;
+  dependency_count: number;
+  used_by: number;
 }
 
 interface TaskRow {
@@ -245,11 +279,36 @@ function migrate(db: Db, file: string, onMigrated?: (message: string) => void): 
 
 export function createStore(db: Db) {
   const sql = {
-    listProjects: db.prepare<[], ProjectRow>('SELECT * FROM projects ORDER BY rowid'),
+    listProjects: db.prepare<[], ProjectRow>("SELECT * FROM projects WHERE kind = 'project' ORDER BY rowid"),
     getProject: db.prepare<[string], ProjectRow>('SELECT * FROM projects WHERE id = ?'),
     insertProject: db.prepare<[ProjectRow]>(
-      'INSERT INTO projects (id, name, description, created_at, updated_at) VALUES (@id, @name, @description, @created_at, @updated_at)',
+      `INSERT INTO projects (id, name, description, created_at, updated_at, kind, owner_user_id, official, template_version,
+         template_dirty, source_template_id, source_template_name, source_template_version, source_applied_at)
+       VALUES (@id, @name, @description, @created_at, @updated_at, @kind, @owner_user_id, @official, @template_version,
+         @template_dirty, @source_template_id, @source_template_name, @source_template_version, @source_applied_at)`,
     ),
+    // 계정 테이블이 없는 체험 모드에서도 같은 SQL을 쓰도록 users는 LEFT JOIN한다(체험 사본도 같은 스키마).
+    listTemplates: db.prepare<[], TemplateRow>(
+      `SELECT p.*, u.display_name AS owner_name,
+         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id) AS task_count,
+         (SELECT COUNT(*) FROM dependencies d WHERE d.project_id = p.id) AS dependency_count,
+         (SELECT COUNT(*) FROM projects q WHERE q.source_template_id = p.id) AS used_by
+       FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id
+       WHERE p.kind = 'template' ORDER BY p.official DESC, p.name COLLATE NOCASE`,
+    ),
+    ownerName: db.prepare<[string], { display_name: string }>('SELECT display_name FROM users WHERE id = ?'),
+    updateTemplateMeta: db.prepare<[string, string, number, number, string, string]>(
+      'UPDATE projects SET name = ?, description = ?, official = ?, template_dirty = ?, updated_at = ? WHERE id = ?',
+    ),
+    markTemplateChanged: db.prepare<[string, string]>(
+      "UPDATE projects SET template_dirty = 1, updated_at = ? WHERE id = ? AND kind = 'template'",
+    ),
+    // 지금 판으로 이미 만든 프로젝트가 있는지. 있으면 그 뒤에 고친 내용은 새 판이다.
+    usedAtVersion: db.prepare<[string, number], { used: number }>(
+      'SELECT EXISTS (SELECT 1 FROM projects WHERE source_template_id = ? AND source_template_version = ?) AS used',
+    ),
+    setTemplateVersion: db.prepare<[number, string]>('UPDATE projects SET template_version = ?, template_dirty = 0 WHERE id = ?'),
+    deleteProject: db.prepare<[string]>('DELETE FROM projects WHERE id = ?'),
     listTasks: db.prepare<[string], TaskRow>('SELECT * FROM tasks WHERE project_id = ? ORDER BY rowid'),
     getTask: db.prepare<[string], TaskRow>('SELECT * FROM tasks WHERE id = ?'),
     insertTask: db.prepare<[TaskRow]>(
@@ -286,6 +345,91 @@ export function createStore(db: Db) {
     return project;
   }
 
+  function requireTemplate(templateId: string): ProjectRow {
+    const row = sql.getProject.get(templateId);
+    if (!row || row.kind !== 'template') throw new ApiError(404, 'NOT_FOUND', `템플릿을 찾을 수 없습니다: ${templateId}`);
+    return row;
+  }
+
+  function ownerNameOf(row: ProjectRow): string | null {
+    return row.owner_user_id ? (sql.ownerName.get(row.owner_user_id)?.display_name ?? null) : null;
+  }
+
+  function dto(row: ProjectRow): ProjectDto {
+    return toProjectDto(row, row.kind === 'template' ? ownerNameOf(row) : null);
+  }
+
+  /**
+   * 템플릿의 공정·연결을 바꾸면 '바뀜'으로 표시한다. 프로젝트면 아무것도 하지 않는다.
+   * 판(F-T09: 적용 당시 정의의 식별)은 고칠 때마다 올리지 않고, 바뀐 뒤 처음 프로젝트를 만들 때 하나 올린다(instantiate).
+   * 그래서 같은 판으로 만든 프로젝트들은 같은 정의에서 나왔고, 판 번호는 실제로 쓰인 정의만 센다.
+   */
+  function touch(projectId: string): void {
+    sql.markTemplateChanged.run(new Date().toISOString(), projectId);
+  }
+
+  /** 템플릿에는 진행 상태와 Jira 링크가 없다(F-T06: 실행 정보는 프로젝트마다 따로). */
+  function checkTemplateInput(projectId: string, input: Input, current?: TaskRow): void {
+    if (sql.getProject.get(projectId)?.kind !== 'template') return;
+    if (input.status !== undefined && input.status !== (current?.status ?? 'todo')) {
+      throw invalidInput('템플릿 공정에는 진행 상태가 없습니다. 템플릿으로 프로젝트를 만든 뒤 바꾸세요.');
+    }
+    if (input.jiraUrl !== undefined && input.jiraUrl !== null && input.jiraUrl !== '') {
+      throw invalidInput('템플릿에는 Jira 링크를 넣지 않습니다. 이슈는 프로젝트마다 다르므로 프로젝트를 만든 뒤 연결하세요.');
+    }
+  }
+
+  /**
+   * 한 그래프(프로젝트 또는 템플릿)의 공정·포함관계·연결을 새 ID로 다른 그래프에 복사한다(F-T05, F-H10).
+   * 진행 상태와 Jira 링크는 가져오지 않고(F-T06), 제목·설명·Confluence 링크는 가져온다.
+   */
+  function copyGraph(fromId: string, toId: string, now: string): number {
+    const rows = sql.listTasks.all(fromId);
+    const ids = new Map(rows.map((row) => [row.id, newId('tsk')]));
+    const depth = (row: TaskRow): number => {
+      let d = 0;
+      for (let parent = row.parent_id; parent; parent = rows.find((r) => r.id === parent)?.parent_id ?? null) d += 1;
+      return d;
+    };
+    // 상위를 하위보다 먼저 넣어야 외래 키가 맞는다. 같은 깊이는 원래 순서(rowid)대로.
+    const ordered = rows.map((row, index) => ({ row, index, depth: depth(row) })).sort((a, b) => a.depth - b.depth || a.index - b.index);
+    for (const { row } of ordered) {
+      sql.insertTask.run({
+        id: ids.get(row.id)!,
+        project_id: toId,
+        parent_id: row.parent_id ? ids.get(row.parent_id)! : null,
+        title: row.title,
+        description: row.description,
+        status: 'todo',
+        jira_url: null,
+        confluence_url: row.confluence_url,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    for (const edge of dependenciesOf(fromId)) sql.insertDependency.run(toId, ids.get(edge.from)!, ids.get(edge.to)!, now);
+    return rows.length;
+  }
+
+  function newGraphRow(kind: 'project' | 'template', input: Input, now: string): ProjectRow {
+    return {
+      id: newId(kind === 'project' ? 'prj' : 'tpl'),
+      name: readText(input.name, kind === 'project' ? '프로젝트 이름' : '템플릿 이름', MAX_LENGTH.name, { required: true, trim: true }),
+      description: readText(input.description, '설명', MAX_LENGTH.description) ?? '',
+      created_at: now,
+      updated_at: now,
+      kind,
+      owner_user_id: null,
+      official: 0,
+      template_version: 1,
+      template_dirty: 0,
+      source_template_id: null,
+      source_template_name: null,
+      source_template_version: null,
+      source_applied_at: null,
+    };
+  }
+
   function requireTask(taskId: string): TaskRow {
     const task = sql.getTask.get(taskId);
     if (!task) throw new ApiError(404, 'NOT_FOUND', `공정을 찾을 수 없습니다: ${taskId}`);
@@ -317,7 +461,7 @@ export function createStore(db: Db) {
     const prerequisites = analyzePrerequisites(tasks, dependencies);
     const hierarchy = analyzeHierarchy(tasks);
     return {
-      project: toProjectDto(project),
+      project: dto(project),
       tasks: rows.map((row) => toTaskDto(row, prerequisites.get(row.id)!, hierarchy.get(row.id)!)),
       dependencies,
       summary: summarize(tasks),
@@ -346,20 +490,89 @@ export function createStore(db: Db) {
 
   return {
     listProjects(): ProjectDto[] {
-      return sql.listProjects.all().map(toProjectDto);
+      return sql.listProjects.all().map(dto);
     },
 
     createProject: write((input: Input): ProjectDto => {
-      const now = new Date().toISOString();
-      const row: ProjectRow = {
-        id: newId('prj'),
-        name: readText(input.name, '프로젝트 이름', MAX_LENGTH.name, { required: true, trim: true }),
-        description: readText(input.description, '설명', MAX_LENGTH.description) ?? '',
-        created_at: now,
-        updated_at: now,
-      };
+      const row = newGraphRow('project', input, new Date().toISOString());
       sql.insertProject.run(row);
-      return toProjectDto(row);
+      return dto(row);
+    }),
+
+    /** 프로젝트 또는 템플릿 하나(권한 검사용). 없으면 NOT_FOUND */
+    getProject: (projectId: string): ProjectDto => dto(requireProject(projectId)),
+    /** 공정이 속한 프로젝트·템플릿 ID */
+    projectIdOfTask: (taskId: string): string => requireTask(taskId).project_id,
+
+    /** 모든 템플릿(보이는지 거르는 것은 호출하는 쪽 몫). canEdit은 false로 두고 호출하는 쪽이 채운다. */
+    listTemplates(): TemplateSummaryDto[] {
+      return sql.listTemplates.all().map((row) => ({
+        ...(toProjectDto(row, row.owner_name) as TemplateSummaryDto),
+        taskCount: row.task_count,
+        dependencyCount: row.dependency_count,
+        usedBy: row.used_by,
+        canEdit: false,
+      }));
+    },
+
+    /** 빈 템플릿. ownerId가 있으면 그 사람의 개인 템플릿, official이면 회사 템플릿 */
+    createTemplate: write((input: Input, owner: { ownerId: string | null; official: boolean }): ProjectDto => {
+      const row = { ...newGraphRow('template', input, new Date().toISOString()), owner_user_id: owner.ownerId, official: owner.official ? 1 : 0 };
+      sql.insertProject.run(row);
+      return dto(row);
+    }),
+
+    /** 프로젝트나 다른 템플릿의 공정·연결을 복사해 새 템플릿으로 저장한다(F-T02, 회사 템플릿을 내 템플릿으로 복사). */
+    saveAsTemplate: write((sourceId: string, input: Input, owner: { ownerId: string | null; official: boolean }): ProjectDto => {
+      requireProject(sourceId);
+      const now = new Date().toISOString();
+      const row = { ...newGraphRow('template', input, now), owner_user_id: owner.ownerId, official: owner.official ? 1 : 0 };
+      sql.insertProject.run(row);
+      copyGraph(sourceId, row.id, now);
+      return dto(row);
+    }),
+
+    /** 템플릿으로 새 프로젝트를 만든다(F-T04~F-T06). 출처로 템플릿 ID·이름·판을 남긴다(F-T09). */
+    instantiate: write((templateId: string, input: Input): ProjectDto => {
+      const template = requireTemplate(templateId);
+      const now = new Date().toISOString();
+      // 지금 판으로 만든 프로젝트가 이미 있고 그 뒤에 고쳤다면 새 판으로 기록한다.
+      if (template.template_dirty === 1) {
+        const used = sql.usedAtVersion.get(template.id, template.template_version)!.used === 1;
+        if (used) template.template_version += 1;
+        sql.setTemplateVersion.run(template.template_version, template.id);
+      }
+      const row: ProjectRow = {
+        ...newGraphRow('project', input, now),
+        source_template_id: template.id,
+        source_template_name: template.name,
+        source_template_version: template.template_version,
+        source_applied_at: now,
+      };
+      if (input.description === undefined) row.description = template.description;
+      sql.insertProject.run(row);
+      copyGraph(templateId, row.id, now);
+      return dto(row);
+    }),
+
+    /** 템플릿 이름·설명·회사 템플릿 여부를 바꾼다. */
+    updateTemplate: write((templateId: string, input: Input): ProjectDto => {
+      const row = requireTemplate(templateId);
+      const name = input.name === undefined ? row.name : readText(input.name, '템플릿 이름', MAX_LENGTH.name, { required: true, trim: true });
+      const description = readText(input.description, '설명', MAX_LENGTH.description) ?? row.description;
+      if (input.official !== undefined && typeof input.official !== 'boolean') throw invalidInput('회사 템플릿(official): true 또는 false여야 합니다.');
+      const official = input.official === undefined ? row.official : input.official ? 1 : 0;
+      // 이름·설명이 바뀌면 정의가 바뀐 것으로 본다. 회사 템플릿 지정·해제는 정의를 바꾸지 않는다.
+      const changed = name !== row.name || description !== row.description ? 1 : row.template_dirty;
+      sql.updateTemplateMeta.run(name, description, official, changed, new Date().toISOString(), templateId);
+      return dto(requireTemplate(templateId));
+    }),
+
+    /** 템플릿을 지운다. 그 템플릿으로 만든 프로젝트는 그대로이고 출처 기록도 남는다(F-T10, AC-22). */
+    deleteTemplate: write((templateId: string): ProjectDto => {
+      const row = requireTemplate(templateId);
+      sql.deleteProject.run(templateId);
+      return dto(row);
     }),
 
     getGraph(projectId: string): GraphDto {
@@ -370,6 +583,7 @@ export function createStore(db: Db) {
 
     createTask: write((projectId: string, input: Input): TaskChangeResult => {
       requireProject(projectId);
+      checkTemplateInput(projectId, input);
       const now = new Date().toISOString();
       const row: TaskRow = {
         id: newId('tsk'),
@@ -385,6 +599,7 @@ export function createStore(db: Db) {
       };
       if (row.parent_id !== null) requireParent(projectId, row.parent_id);
       sql.insertTask.run(row);
+      touch(projectId);
       const transitions = applyAutoTransitions(projectId, [], [row.parent_id]);
       return { task: getTask(row.id), autoTransitions: transitions };
     }),
@@ -394,6 +609,7 @@ export function createStore(db: Db) {
       if (input.parentId !== undefined) {
         throw invalidInput('상위 공정은 여기서 바꿀 수 없습니다. 이동(POST /api/v1/tasks/{taskId}/move)을 쓰세요.');
       }
+      checkTemplateInput(task.project_id, input, task);
       const jiraUrl = readLink(input.jiraUrl, 'Jira 링크');
       const confluenceUrl = readLink(input.confluenceUrl, 'Confluence 링크');
       const status = readStatus(input.status) ?? task.status;
@@ -409,6 +625,7 @@ export function createStore(db: Db) {
         confluence_url: confluenceUrl === undefined ? task.confluence_url : confluenceUrl,
         updated_at: new Date().toISOString(),
       });
+      touch(task.project_id);
       // 상위 공정을 사용자가 직접 바꾼 경우에는 그 공정의 하위를 보고 되돌리지 않는다(F-H06). 그 위 상위만 다시 본다.
       const transitions = status === task.status ? [] : applyAutoTransitions(task.project_id, [task.parent_id]);
       return { task: getTask(taskId), autoTransitions: transitions };
@@ -450,6 +667,7 @@ export function createStore(db: Db) {
       }
       for (const edge of attached) sql.deleteDependency.run(task.project_id, edge.from, edge.to);
       sql.setParent.run(parentId, new Date().toISOString(), taskId);
+      touch(task.project_id);
       const transitions = applyAutoTransitions(task.project_id, [task.parent_id], [parentId]);
       return { task: getTask(taskId), removedDependencies: attached, autoTransitions: transitions };
     }),
@@ -466,6 +684,7 @@ export function createStore(db: Db) {
       );
       // 자손 공정과 연결은 외래 키 CASCADE로 함께 지워진다.
       sql.deleteTask.run(taskId);
+      touch(task.project_id);
       return {
         deletedTaskId: taskId,
         removedTasks: descendants.map((id) => ({ id, parentId: byId.get(id)!.parent_id, title: byId.get(id)!.title })),
@@ -512,6 +731,7 @@ export function createStore(db: Db) {
         throw new ApiError(422, 'VALIDATION_CYCLE', `이 연결을 추가하면 순환이 생깁니다: ${path}`, { cycle });
       }
       sql.insertDependency.run(projectId, from, to, new Date().toISOString());
+      touch(projectId);
       return { from, to };
     }),
 
@@ -522,16 +742,30 @@ export function createStore(db: Db) {
       if (sql.deleteDependency.run(projectId, from, to).changes === 0) {
         throw new ApiError(404, 'NOT_FOUND', '해당 연결이 없습니다.');
       }
+      touch(projectId);
       return { from, to };
     }),
   };
 }
 
-function toProjectDto(row: ProjectRow): ProjectDto {
+function toProjectDto(row: ProjectRow, ownerName: string | null): ProjectDto {
   return {
     id: row.id,
     name: row.name,
     description: row.description,
+    kind: row.kind,
+    ...(row.kind === 'template'
+      ? { template: { official: row.official === 1, ownerId: row.owner_user_id, ownerName, version: row.template_version } }
+      : {}),
+    source:
+      row.source_template_id === null
+        ? null
+        : {
+            templateId: row.source_template_id,
+            name: row.source_template_name!,
+            version: row.source_template_version!,
+            appliedAt: row.source_applied_at!,
+          },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

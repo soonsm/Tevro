@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, join, resolve, sep } from 'node:path';
 import { POLICY, type Accounts, type Actor } from './accounts.ts';
 import { ApiError, internalError, invalidInput } from './errors.ts';
+import type { ProjectDto } from '../shared/types.ts';
 import type { Store } from './store.ts';
 import { readSandboxId, type Sandbox, type Trial } from './trial.ts';
 
@@ -40,10 +41,13 @@ const SESSION_COOKIE = 'tevro_session';
  * - public: 로그인 없이
  * - read: 로그인한 누구나(세션 또는 토큰)
  * - write: 편집자·관리자이고, 토큰이면 read-write 범위
+ * - own: 로그인한 누구나(열람자 포함)이고, 토큰이면 read-write 범위. 내 템플릿처럼 자기 것을 바꾸는 일. 대상별 권한은 경로 안에서 본다
  * - session: 웹 세션으로 로그인한 누구나. 토큰 발급처럼 토큰으로 하면 안 되는 일
  * - admin: 웹 세션으로 로그인한 관리자
+ *
+ * 프로젝트·공정·연결 경로는 대상이 템플릿일 수 있어 경로 수준에서는 read·own으로 열고, 대상 그래프의 종류로 다시 본다(guardGraph).
  */
-type Access = 'public' | 'read' | 'write' | 'session' | 'admin';
+type Access = 'public' | 'read' | 'write' | 'own' | 'session' | 'admin';
 
 interface Request {
   params: Record<string, string>;
@@ -86,28 +90,89 @@ export function createApp({ store, accounts, trial, webRoot }: AppOptions): Serv
   if ((store === undefined) === (trial === undefined)) throw new Error('store와 trial 중 하나만 넘깁니다.');
   if (store && !accounts) throw new Error('store를 넘길 때는 accounts도 넘깁니다.');
 
+  // 대상 그래프(프로젝트·템플릿)를 볼 수 있는지, 바꿀 수 있는지. 체험 모드(actor 없음)는 모두 열려 있다.
+  const view = (r: Request, projectId: string) => guardGraph(r.store, r.actor, projectId, 'read');
+  const edit = (r: Request, projectId: string) => guardGraph(r.store, r.actor, projectId, 'write');
+  const editTask = (r: Request, taskId: string) => edit(r, r.store.projectIdOfTask(taskId));
+
   const routes: Route[] = [
     route('GET', '/api/v1/projects', 'read', ({ store }) => ({ body: store.listProjects() })),
     route('POST', '/api/v1/projects', 'write', ({ store, body }) => ({ status: 201, body: store.createProject(body) })),
-    route('GET', '/api/v1/projects/:projectId/graph', 'read', ({ store, params }) => ({ body: store.getGraph(params.projectId) })),
-    route('POST', '/api/v1/projects/:projectId/tasks', 'write', ({ store, params, body }) => ({
+    route('GET', '/api/v1/projects/:projectId/graph', 'read', (r) => {
+      view(r, r.params.projectId);
+      return { body: r.store.getGraph(r.params.projectId) };
+    }),
+    route('POST', '/api/v1/projects/:projectId/tasks', 'own', (r) => {
+      edit(r, r.params.projectId);
+      return { status: 201, body: r.store.createTask(r.params.projectId, r.body) };
+    }),
+    route('POST', '/api/v1/projects/:projectId/dependencies', 'own', (r) => {
+      edit(r, r.params.projectId);
+      return { status: 201, body: r.store.addDependency(r.params.projectId, r.body) };
+    }),
+    route('DELETE', '/api/v1/projects/:projectId/dependencies', 'own', (r) => {
+      edit(r, r.params.projectId);
+      return {
+        body: r.store.removeDependency(r.params.projectId, {
+          from: r.query.get('from') ?? undefined,
+          to: r.query.get('to') ?? undefined,
+        }),
+      };
+    }),
+    route('GET', '/api/v1/tasks/:taskId', 'read', (r) => {
+      view(r, r.store.projectIdOfTask(r.params.taskId));
+      return { body: r.store.getTask(r.params.taskId) };
+    }),
+    route('PATCH', '/api/v1/tasks/:taskId', 'own', (r) => {
+      editTask(r, r.params.taskId);
+      return { body: r.store.updateTask(r.params.taskId, r.body) };
+    }),
+    route('POST', '/api/v1/tasks/:taskId/move', 'own', (r) => {
+      editTask(r, r.params.taskId);
+      return { body: r.store.moveTask(r.params.taskId, r.body) };
+    }),
+    route('DELETE', '/api/v1/tasks/:taskId', 'own', (r) => {
+      editTask(r, r.params.taskId);
+      return { body: r.store.deleteTask(r.params.taskId) };
+    }),
+
+    // 템플릿(F-T01~F-T10). 회사 템플릿(official)은 모두가 보고 관리자만 바꾸며, 개인 템플릿은 만든 사람만 보고 바꾼다(관리자는 모두).
+    route('GET', '/api/v1/templates', 'read', ({ store, actor }) => ({
+      body: store
+        .listTemplates()
+        .filter((item) => canSeeTemplate(actor, item.template))
+        .map((item) => ({ ...item, canEdit: canEditTemplate(actor, item.template) })),
+    })),
+    route('POST', '/api/v1/templates', 'own', ({ store, actor, body }) => ({
       status: 201,
-      body: store.createTask(params.projectId, body),
+      body: store.createTemplate(body, templateOwner(actor, body.official)),
     })),
-    route('POST', '/api/v1/projects/:projectId/dependencies', 'write', ({ store, params, body }) => ({
-      status: 201,
-      body: store.addDependency(params.projectId, body),
-    })),
-    route('DELETE', '/api/v1/projects/:projectId/dependencies', 'write', ({ store, params, query }) => ({
-      body: store.removeDependency(params.projectId, {
-        from: query.get('from') ?? undefined,
-        to: query.get('to') ?? undefined,
-      }),
-    })),
-    route('GET', '/api/v1/tasks/:taskId', 'read', ({ store, params }) => ({ body: store.getTask(params.taskId) })),
-    route('PATCH', '/api/v1/tasks/:taskId', 'write', ({ store, params, body }) => ({ body: store.updateTask(params.taskId, body) })),
-    route('POST', '/api/v1/tasks/:taskId/move', 'write', ({ store, params, body }) => ({ body: store.moveTask(params.taskId, body) })),
-    route('DELETE', '/api/v1/tasks/:taskId', 'write', ({ store, params }) => ({ body: store.deleteTask(params.taskId) })),
+    // 프로젝트나 볼 수 있는 템플릿(회사 템플릿 포함)을 복사해 새 템플릿으로 저장한다.
+    route('POST', '/api/v1/templates/from', 'own', (r) => {
+      const sourceId = typeof r.body.sourceId === 'string' ? r.body.sourceId : '';
+      if (!sourceId) throw invalidInput('복사할 프로젝트·템플릿(sourceId)을 지정하세요.');
+      view(r, sourceId);
+      return { status: 201, body: r.store.saveAsTemplate(sourceId, r.body, templateOwner(r.actor, r.body.official)) };
+    }),
+    route('PATCH', '/api/v1/templates/:templateId', 'own', (r) => {
+      const current = requireTemplateIn(r.store, r.params.templateId);
+      edit(r, r.params.templateId);
+      if (r.body.official !== undefined && r.body.official !== current.template!.official && r.actor && r.actor.user.role !== 'admin') {
+        throw new ApiError(403, 'FORBIDDEN', '회사 템플릿 지정·해제는 관리자만 할 수 있습니다.');
+      }
+      return { body: r.store.updateTemplate(r.params.templateId, r.body) };
+    }),
+    route('DELETE', '/api/v1/templates/:templateId', 'own', (r) => {
+      requireTemplateIn(r.store, r.params.templateId);
+      edit(r, r.params.templateId);
+      return { body: r.store.deleteTemplate(r.params.templateId) };
+    }),
+    // 템플릿으로 프로젝트를 만드는 것은 프로젝트를 만드는 일이라 편집자 이상이다.
+    route('POST', '/api/v1/templates/:templateId/instantiate', 'write', (r) => {
+      requireTemplateIn(r.store, r.params.templateId);
+      view(r, r.params.templateId);
+      return { status: 201, body: r.store.instantiate(r.params.templateId, r.body) };
+    }),
   ];
   if (accounts) routes.push(...accountRoutes(accounts));
   if (!trial) {
@@ -337,13 +402,63 @@ function authorize(req: IncomingMessage, url: URL, accounts: Accounts, access: A
     throw new ApiError(403, 'FORBIDDEN', '이 작업은 웹 화면에서 로그인해서 하세요. 토큰으로는 할 수 없습니다.');
   }
   if (access === 'admin' && role !== 'admin') throw new ApiError(403, 'FORBIDDEN', '관리자만 할 수 있습니다.');
-  if (access === 'write') {
-    if (role === 'viewer') throw new ApiError(403, 'FORBIDDEN', '열람자는 바꿀 수 없습니다. 관리자에게 편집자 역할을 요청하세요.');
-    if (actor.token && actor.token.scope !== 'read-write') {
-      throw new ApiError(403, 'FORBIDDEN', '읽기 전용(read) 토큰입니다. 바꾸려면 read-write 범위의 토큰을 쓰세요.');
-    }
+  if (access === 'write' && role === 'viewer') throw new ApiError(403, 'FORBIDDEN', '열람자는 바꿀 수 없습니다. 관리자에게 편집자 역할을 요청하세요.');
+  if ((access === 'write' || access === 'own') && actor.token && actor.token.scope !== 'read-write') {
+    throw new ApiError(403, 'FORBIDDEN', '읽기 전용(read) 토큰입니다. 바꾸려면 read-write 범위의 토큰을 쓰세요.');
   }
   return actor;
+}
+
+type TemplateAccess = Pick<NonNullable<ProjectDto['template']>, 'official' | 'ownerId'>;
+
+function canSeeTemplate(actor: Actor | undefined, template: TemplateAccess): boolean {
+  return !actor || template.official || template.ownerId === actor.user.id || actor.user.role === 'admin';
+}
+
+function canEditTemplate(actor: Actor | undefined, template: TemplateAccess): boolean {
+  if (!actor) return true;
+  if (actor.user.role === 'admin') return true;
+  return !template.official && template.ownerId === actor.user.id;
+}
+
+/**
+ * 그래프(프로젝트·템플릿)별 권한. 프로젝트는 누구나 보고 편집자 이상이 바꾼다.
+ * 템플릿은 보이지 않으면 없는 것처럼(NOT_FOUND) 다루고, 회사 템플릿은 관리자만, 개인 템플릿은 주인(과 관리자)만 바꾼다.
+ */
+function guardGraph(store: Store, actor: Actor | undefined, projectId: string, mode: 'read' | 'write'): ProjectDto {
+  const project = store.getProject(projectId);
+  if (!actor) return project;
+  if (project.kind === 'project') {
+    if (mode === 'write' && actor.user.role === 'viewer') {
+      throw new ApiError(403, 'FORBIDDEN', '열람자는 바꿀 수 없습니다. 관리자에게 편집자 역할을 요청하세요.');
+    }
+    return project;
+  }
+  if (!canSeeTemplate(actor, project.template!)) throw new ApiError(404, 'NOT_FOUND', `템플릿을 찾을 수 없습니다: ${projectId}`);
+  if (mode === 'write' && !canEditTemplate(actor, project.template!)) {
+    throw new ApiError(
+      403,
+      'FORBIDDEN',
+      project.template!.official
+        ? '회사 템플릿은 관리자만 고칠 수 있습니다. 고쳐 쓰려면 내 템플릿으로 복사하세요.'
+        : '다른 사람의 템플릿은 고칠 수 없습니다.',
+    );
+  }
+  return project;
+}
+
+function requireTemplateIn(store: Store, templateId: string): ProjectDto {
+  const project = store.getProject(templateId);
+  if (project.kind !== 'template') throw new ApiError(404, 'NOT_FOUND', `템플릿을 찾을 수 없습니다: ${templateId}`);
+  return project;
+}
+
+/** 새 템플릿의 주인. 회사 템플릿으로 만드는 것은 관리자만. 체험 모드는 주인 없이 회사 템플릿처럼 모두에게 보인다. */
+function templateOwner(actor: Actor | undefined, official: unknown): { ownerId: string | null; official: boolean } {
+  if (official !== undefined && typeof official !== 'boolean') throw invalidInput('회사 템플릿(official): true 또는 false여야 합니다.');
+  if (!actor) return { ownerId: null, official: official ?? true };
+  if (official && actor.user.role !== 'admin') throw new ApiError(403, 'FORBIDDEN', '회사 템플릿은 관리자만 만들 수 있습니다.');
+  return { ownerId: actor.user.id, official: official === true };
 }
 
 function hostOf(origin: string): string | null {

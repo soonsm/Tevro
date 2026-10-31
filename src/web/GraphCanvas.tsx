@@ -58,6 +58,8 @@ interface ViewState {
   cycle: Set<string>;
   titles: Map<string, string>;
   open: (taskId: string) => void;
+  /** 템플릿: 진행 상태와 선행 조건 충족 여부를 그리지 않는다 */
+  template: boolean;
 }
 
 const ViewContext = createContext<ViewState>({
@@ -66,6 +68,7 @@ const ViewContext = createContext<ViewState>({
   cycle: new Set(),
   titles: new Map(),
   open: () => {},
+  template: false,
 });
 
 interface Props {
@@ -162,8 +165,9 @@ export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, o
       // 물려받은 선행은 다른 층에 있으므로 이름은 전체 공정에서 찾는다.
       titles: new Map(graph.tasks.map((task) => [task.id, task.title])),
       open: onOpen,
+      template: graph.project.kind === 'template',
     }),
-    [selectedTaskId, highlight, cycle, graph.tasks, onOpen],
+    [selectedTaskId, highlight, cycle, graph.tasks, graph.project.kind, onOpen],
   );
 
   const edges = useMemo<RoutedEdgeType[]>(() => {
@@ -260,7 +264,7 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
     <div className={`task-node is-${emphasis}${parent ? ' is-parent' : ''}`} title={task.title}>
       <Handle type="target" position={Position.Left} />
       <div className="task-node__top">
-        <StatusChip status={task.status} />
+        {view.template ? <span className="task-node__kind">템플릿 공정</span> : <StatusChip status={task.status} />}
         {(task.jiraUrl || task.confluenceUrl) && (
           <span className="task-node__links">
             {task.confluenceUrl && <DocIcon label="Confluence 문서 있음" />}
@@ -269,15 +273,15 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
         )}
       </div>
       <div className="task-node__title">{task.title}</div>
-      <PrerequisiteLine task={task} titles={view.titles} />
+      {!view.template && <PrerequisiteLine task={task} titles={view.titles} />}
       {parent && (
         <div className="task-node__children">
           <span
             className={`task-node__count${task.inconsistency ? ' is-warn' : ''}`}
             title={task.inconsistency ? INCONSISTENCY_LABELS[task.inconsistency] : `하위 공정 ${task.childCount}개 중 ${task.doneChildCount}개 완료`}
           >
-            {task.inconsistency ? <WarnIcon /> : <StackIcon />}
-            하위 {task.doneChildCount}/{task.childCount}
+            {task.inconsistency && !view.template ? <WarnIcon /> : <StackIcon />}
+            {view.template ? `하위 ${task.childCount}` : `하위 ${task.doneChildCount}/${task.childCount}`}
           </span>
           <button
             type="button"

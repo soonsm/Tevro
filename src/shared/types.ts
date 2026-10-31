@@ -5,8 +5,43 @@ export interface ProjectDto {
   id: string;
   name: string;
   description: string;
+  /** project: 실제 프로젝트, template: 템플릿(진행 상태가 없고, 프로젝트를 만드는 데 씀) */
+  kind: 'project' | 'template';
+  /** 템플릿일 때만 */
+  template?: TemplateInfo;
+  /** 템플릿으로 만든 프로젝트면 그 출처(F-T09). 템플릿을 지워도 남는다 */
+  source: TemplateSource | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TemplateInfo {
+  /** 회사 템플릿(공식). 모두가 보고 쓰며 관리자만 고친다. false면 owner의 개인 템플릿 */
+  official: boolean;
+  /** 만든 사람(개인 템플릿의 주인). 체험 모드나 주인이 없으면 null */
+  ownerId: string | null;
+  ownerName: string | null;
+  /** 판. 공정·연결·이름을 바꿀 때마다 1씩 오른다 */
+  version: number;
+}
+
+export interface TemplateSource {
+  templateId: string;
+  name: string;
+  version: number;
+  appliedAt: string;
+}
+
+/** 템플릿 목록의 한 줄 */
+export interface TemplateSummaryDto extends ProjectDto {
+  kind: 'template';
+  template: TemplateInfo;
+  taskCount: number;
+  dependencyCount: number;
+  /** 이 템플릿으로 만든 프로젝트 수 */
+  usedBy: number;
+  /** 지금 사람이 고칠 수 있는지(회사 템플릿은 관리자, 내 템플릿은 주인) */
+  canEdit: boolean;
 }
 
 export interface TaskDto {

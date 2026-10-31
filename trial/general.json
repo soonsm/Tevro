@@ -30,5 +30,36 @@
         ["mail", "welcome"]
       ]
     }
+  ],
+  "templates": [
+    {
+      "name": "신입사원 입사 준비 표준",
+      "description": "입사 확정부터 첫 출근까지 챙길 일",
+      "tasks": [
+        { "key": "offer", "title": "입사 확정 안내" },
+        { "key": "papers", "title": "입사 서류 받기" },
+        { "key": "mentor", "title": "멘토 지정" },
+        { "key": "workplace", "title": "근무 환경 준비" },
+        { "key": "seat", "title": "자리 배정", "parent": "workplace" },
+        { "key": "account", "title": "사내 계정 발급", "parent": "workplace" },
+        { "key": "laptop", "title": "노트북 설정", "parent": "workplace" },
+        { "key": "schedule", "title": "첫 주 일정표 작성" },
+        { "key": "training", "title": "필수 교육 신청" },
+        { "key": "mail", "title": "첫날 안내 메일 발송" },
+        { "key": "welcome", "title": "첫 출근 맞이" },
+        { "key": "review", "title": "수습 평가 계획" }
+      ],
+      "dependencies": [
+        ["offer", "papers"],
+        ["papers", "workplace"],
+        ["papers", "training"],
+        ["mentor", "schedule"],
+        ["account", "laptop"],
+        ["workplace", "mail"],
+        ["schedule", "mail"],
+        ["training", "mail"],
+        ["mail", "welcome"]
+      ]
+    }
   ]
 }

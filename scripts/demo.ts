@@ -14,9 +14,10 @@ if (!/^[a-z0-9-]+$/.test(name)) {
 }
 const dataset = readDataset(resolve(import.meta.dirname, `../trial/${name}.json`));
 
-function tevro<T>(args: string[]): T {
+function tevro<T>(args: string[], options: { allowAuthFailure?: boolean } = {}): T | null {
   console.log(`$ tevro ${args.map((arg) => (/[\s"]/.test(arg) ? JSON.stringify(arg) : arg)).join(' ')}`);
   const result = spawnSync(process.execPath, [cliPath, ...args, '--json'], { encoding: 'utf8' });
+  if (result.status === 4 && options.allowAuthFailure) return null;
   if (result.status !== 0) {
     const reason = result.stderr.trim();
     console.error(
@@ -32,15 +33,19 @@ function tevro<T>(args: string[]): T {
 }
 
 const projectIds: string[] = [];
-for (const project of dataset.projects) {
-  const projectId = tevro<{ id: string }>([
-    'project',
-    'create',
-    '--name',
-    project.name,
-    ...(project.description ? ['--description', project.description] : []),
-  ]).id;
-  projectIds.push(projectId);
+const graphs = [
+  ...dataset.projects.map((project) => ({ project, kind: 'project' as const })),
+  ...dataset.templates.map((project) => ({ project, kind: 'template' as const })),
+];
+for (const { project, kind } of graphs) {
+  const description = project.description ? ['--description', project.description] : [];
+  // 예시 템플릿은 회사 템플릿으로 넣는다. 토큰 주인이 관리자가 아니면 내 템플릿으로 넣는다.
+  const projectId =
+    kind === 'project'
+      ? tevro<{ id: string }>(['project', 'create', '--name', project.name, ...description])!.id
+      : (tevro<{ id: string }>(['template', 'create', '--name', project.name, ...description, '--official'], { allowAuthFailure: true }) ??
+          tevro<{ id: string }>(['template', 'create', '--name', project.name, ...description])!).id;
+  if (kind === 'project') projectIds.push(projectId);
   // 상위 공정은 하위보다 먼저 만든다(readDataset이 정렬해 둠). 상위의 진행 상태는 하위가 착수되면서 자동으로 바뀔 수 있다.
   const ids = new Map<string, string>();
   for (const task of project.tasks) {
@@ -50,7 +55,7 @@ for (const project of dataset.projects) {
     if (task.description) args.push('--description', task.description);
     if (task.jiraUrl) args.push('--jira-url', task.jiraUrl);
     if (task.confluenceUrl) args.push('--confluence-url', task.confluenceUrl);
-    ids.set(task.key, tevro<{ task: { id: string } }>(args).task.id);
+    ids.set(task.key, tevro<{ task: { id: string } }>(args)!.task.id);
   }
   for (const [from, to] of project.dependencies) {
     tevro(['dependency', 'add', '--project', projectId, '--from', ids.get(from)!, '--to', ids.get(to)!]);

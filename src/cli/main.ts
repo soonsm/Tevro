@@ -28,6 +28,7 @@ import type {
   ProjectDto,
   TaskChangeResult,
   TaskDto,
+  TemplateSummaryDto,
 } from '../shared/types.ts';
 
 // ADR-0007 종료 코드 중 MVP에서 쓰는 것
@@ -380,6 +381,135 @@ graph
     emit(command, result, () => graphText(result, full, options.root));
   });
 
+const template = program
+  .command('template')
+  .description('템플릿(회사 템플릿·내 템플릿). 템플릿 안의 공정·연결은 task·dependency 명령에 템플릿 ID를 --project로 넣어 고침');
+
+template
+  .command('list')
+  .description('볼 수 있는 템플릿 목록 (회사 템플릿, 내 템플릿)')
+  .action(async (_options, command: Command) => {
+    const templates = await client(command).get<TemplateSummaryDto[]>('/api/v1/templates');
+    emit(command, templates, () =>
+      templates.length === 0
+        ? '템플릿이 없습니다. 만들기: tevro template create --name <이름> 또는 tevro template save --from <프로젝트 ID> --name <이름>'
+        : table([
+            ['구분', '이름', '판', '공정', '연결', '사용', 'ID'],
+            ...templates.map((item) => [
+              templateKind(item),
+              item.name,
+              String(item.template.version),
+              String(item.taskCount),
+              String(item.dependencyCount),
+              String(item.usedBy),
+              item.id,
+            ]),
+          ]),
+    );
+  });
+
+template
+  .command('show')
+  .description('템플릿 하나의 정보와 공정 구조')
+  .argument('<template-id>', '템플릿 ID')
+  .action(async (templateId: string, _options, command: Command) => {
+    const graph = await client(command).get<GraphDto>(`/api/v1/projects/${segment(templateId)}/graph`);
+    if (graph.project.kind !== 'template') {
+      throw new CliFailure(EXIT.notFound, { code: 'NOT_FOUND', detail: `템플릿이 아닙니다(프로젝트입니다): ${templateId}` });
+    }
+    emit(command, graph, () => {
+      const info = graph.project.template!;
+      const owner = info.official ? '회사 템플릿' : `내 템플릿${info.ownerName ? ` (${info.ownerName})` : ''}`;
+      return [
+        `${graph.project.name} (${graph.project.id})`,
+        `  ${owner} · ${info.version}판 · 공정 ${graph.tasks.length} · 연결 ${graph.dependencies.length}`,
+        ...(graph.project.description ? [`  ${graph.project.description}`] : []),
+        '',
+        ...treeOrder(graph.tasks).map(({ task: item, depth }) => `  ${'  '.repeat(depth)}${item.title}`),
+      ].join('\n');
+    });
+  });
+
+template
+  .command('create')
+  .description('빈 템플릿 만들기 (내 템플릿. 관리자는 --official로 회사 템플릿)')
+  .requiredOption('--name <name>', '템플릿 이름')
+  .option('--description <text>', '설명')
+  .option('--official', '회사 템플릿으로 (관리자만)')
+  .action(async (options: { name: string; description?: string; official?: boolean }, command: Command) => {
+    const created = await client(command).post<ProjectDto>('/api/v1/templates', options);
+    emit(command, created, () => `템플릿을 만들었습니다: ${created.name} (${created.id})\n공정 추가: tevro task add --project ${created.id} --title <제목>`);
+  });
+
+template
+  .command('save')
+  .alias('save-from-project')
+  .description('프로젝트나 템플릿(회사 템플릿 포함)을 복사해 새 템플릿으로 저장. 진행 상태와 Jira 링크는 빼고 가져옴')
+  .requiredOption('--from <id>', '복사할 프로젝트 ID 또는 템플릿 ID')
+  .requiredOption('--name <name>', '새 템플릿 이름')
+  .option('--description <text>', '설명')
+  .option('--official', '회사 템플릿으로 (관리자만)')
+  .action(async (options: { from: string; name: string; description?: string; official?: boolean }, command: Command) => {
+    const created = await client(command).post<ProjectDto>('/api/v1/templates/from', {
+      sourceId: options.from,
+      name: options.name,
+      description: options.description,
+      official: options.official,
+    });
+    emit(command, created, () => `템플릿으로 저장했습니다: ${created.name} (${created.id})`);
+  });
+
+template
+  .command('update')
+  .description('템플릿 이름·설명 바꾸기, 회사 템플릿 지정·해제(관리자)')
+  .argument('<template-id>', '템플릿 ID')
+  .option('--name <name>', '새 이름')
+  .option('--description <text>', '새 설명')
+  .addOption(new Option('--official', '회사 템플릿으로 지정 (관리자만)').conflicts('personal'))
+  .option('--personal', '회사 템플릿 지정 해제 (관리자만. 만든 사람의 템플릿으로 돌아감)')
+  .action(
+    async (templateId: string, options: { name?: string; description?: string; official?: boolean; personal?: boolean }, command: Command) => {
+      const body: Record<string, unknown> = {};
+      if (options.name !== undefined) body.name = options.name;
+      if (options.description !== undefined) body.description = options.description;
+      if (options.official) body.official = true;
+      if (options.personal) body.official = false;
+      const updated = await client(command).patch<ProjectDto>(`/api/v1/templates/${segment(templateId)}`, body);
+      emit(command, updated, () => `템플릿을 바꿨습니다: ${updated.name} (${updated.template!.official ? '회사 템플릿' : '내 템플릿'}, ${updated.template!.version}판)`);
+    },
+  );
+
+template
+  .command('use')
+  .alias('instantiate')
+  .description('템플릿으로 새 프로젝트 만들기. 진행 상태는 모두 미착수, Jira 링크는 비움 (편집자 이상)')
+  .argument('<template-id>', '템플릿 ID')
+  .requiredOption('--name <name>', '새 프로젝트 이름')
+  .option('--description <text>', '설명 (기본: 템플릿 설명)')
+  .action(async (templateId: string, options: { name: string; description?: string }, command: Command) => {
+    const created = await client(command).post<ProjectDto>(`/api/v1/templates/${segment(templateId)}/instantiate`, options);
+    emit(command, created, () => `프로젝트를 만들었습니다: ${created.name} (${created.id}) — ${created.source!.name} ${created.source!.version}판`);
+  });
+
+template
+  .command('delete')
+  .description('템플릿 삭제. 이 템플릿으로 만든 프로젝트는 그대로 남음 (내 템플릿은 본인, 회사 템플릿은 관리자)')
+  .argument('<template-id>', '템플릿 ID')
+  .option('--yes', '확인 없이 삭제')
+  .action(async (templateId: string, options: { yes?: boolean }, command: Command) => {
+    const api = client(command);
+    if (!options.yes) {
+      const found = (await api.get<TemplateSummaryDto[]>('/api/v1/templates')).find((item) => item.id === templateId);
+      if (!found) throw new CliFailure(EXIT.notFound, { code: 'NOT_FOUND', detail: `템플릿을 찾을 수 없습니다: ${templateId}` });
+      throw new CliFailure(EXIT.usage, {
+        code: 'CONFIRMATION_REQUIRED',
+        detail: `‘${found.name}’(${templateKind(found)}, 공정 ${found.taskCount}개)을 삭제하려면 --yes를 붙여 다시 실행하세요. 이 템플릿으로 만든 프로젝트 ${found.usedBy}개는 그대로 남습니다.`,
+      });
+    }
+    const deleted = await api.delete<ProjectDto>(`/api/v1/templates/${segment(templateId)}`);
+    emit(command, deleted, () => `템플릿을 삭제했습니다: ${deleted.name}`);
+  });
+
 interface TaskOptions {
   title?: string;
   description?: string;
@@ -528,6 +658,10 @@ async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin as AsyncIterable<Buffer>) chunks.push(chunk);
   return Buffer.concat(chunks).toString('utf8');
+}
+
+function templateKind(item: { template?: { official: boolean } }): string {
+  return item.template?.official ? '회사' : '내 것';
 }
 
 function segment(id: string): string {

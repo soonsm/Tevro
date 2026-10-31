@@ -332,6 +332,18 @@ PRD §6.8 예시의 명사(`project`, `task`, `dependency`, `graph`)와 동사 �
 - 에이전트 실행 환경에 Node.js가 없다고 확인될 때(선택지 B 재검토).
 - CLI 호스트의 Node.js 환경이 바뀔 때(배포 형태, Commander.js 15.x의 Node.js 요구 버전).
 
+추기(2026-10-31, 템플릿 명령): 재사용 단계로 미뤘던 템플릿 명령을 정했다. 템플릿 안의 공정·연결은 별도 명령을 두지 않고 기존 `task`·`dependency` 명령에 템플릿 ID(`tpl_…`)를 `--project`로 넣어 고친다. 에이전트가 배울 명령을 줄이고 서버 검증을 그대로 쓰기 위해서다.
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `template list` | 볼 수 있는 템플릿(회사 템플릿·내 템플릿) |
+| `template show <id>` | 정보와 공정 구조 |
+| `template create --name [--description] [--official]` | 빈 템플릿. `--official`은 관리자 |
+| `template save --from <프로젝트·템플릿 ID> --name` (별칭 `save-from-project`) | 복사해 새 템플릿으로 저장. 회사 템플릿을 내 템플릿으로 복사할 때도 쓴다 |
+| `template update <id> [--name] [--description] [--official \| --personal]` | 이름·설명, 회사 템플릿 지정·해제(관리자) |
+| `template use <id> --name` (별칭 `instantiate`) | 템플릿으로 새 프로젝트 |
+| `template delete <id> --yes` | 삭제. `--yes`가 없으면 영향(공정 수, 이 템플릿으로 만든 프로젝트 수)만 보여 주고 종료 코드 2 |
+
 ## 남은 확인 사항
 
 채택 시점(2026-10-08)에 아래 사항 중 '결정됨'으로 표시하지 않은 것은 아직 확인·결정되지 않았다. 확인 결과가 이 결정과 맞지 않으면 새 ADR을 써서 이 ADR을 대체한다([README §1](./README.md)).

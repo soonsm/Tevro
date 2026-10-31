@@ -12,6 +12,7 @@ import type {
   TaskChangeResult,
   Role,
   TaskInput,
+  TemplateSummaryDto,
   TokenDto,
   TokenScope,
   TrialStatus,
@@ -148,6 +149,17 @@ export const api = {
   updateUser: (userId: string, input: { role?: Role; active?: boolean; displayName?: string }) =>
     request<UserDto>('PATCH', `/api/v1/users/${id(userId)}`, input),
   resetPassword: (userId: string, password: string) => request<void>('POST', `/api/v1/users/${id(userId)}/password`, { password }),
+  listTemplates: () => request<TemplateSummaryDto[]>('GET', '/api/v1/templates'),
+  createTemplate: (input: { name: string; description?: string; official?: boolean }) =>
+    request<ProjectDto>('POST', '/api/v1/templates', input),
+  /** 프로젝트나 템플릿을 복사해 새 템플릿으로 저장 */
+  saveAsTemplate: (sourceId: string, input: { name: string; description?: string; official?: boolean }) =>
+    request<ProjectDto>('POST', '/api/v1/templates/from', { sourceId, ...input }),
+  updateTemplate: (templateId: string, input: { name?: string; description?: string; official?: boolean }) =>
+    request<ProjectDto>('PATCH', `/api/v1/templates/${id(templateId)}`, input),
+  deleteTemplate: (templateId: string) => request<ProjectDto>('DELETE', `/api/v1/templates/${id(templateId)}`),
+  instantiate: (templateId: string, name: string) =>
+    request<ProjectDto>('POST', `/api/v1/templates/${id(templateId)}/instantiate`, { name }),
   trialStatus: () => trialRequest('GET', '/api/v1/trial'),
   /** 이 창의 데이터를 그 예시 데이터의 처음 상태로 바꾼다 */
   resetTrial: (dataset: string) => trialRequest('POST', '/api/v1/trial/reset', { dataset }),
