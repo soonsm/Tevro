@@ -1933,3 +1933,23 @@ textarea.input {
   width: 100%;
   min-width: 0;
 }
+
+/* 첫 설정 화면 */
+.setup-card {
+  width: min(460px, 100%);
+}
+
+.setup-card .panel-note code {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.input.setup-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.input.setup-code::placeholder {
+  text-transform: none;
+}

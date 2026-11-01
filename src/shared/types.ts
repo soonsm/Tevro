@@ -162,7 +162,7 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'UNAUTHENTICATED'
   | 'FORBIDDEN'
-  | 'ACCOUNT_LOCKED'
+  | 'RATE_LIMITED'
   | 'TRIAL_SESSION_REQUIRED'
   | 'INTERNAL';
 
@@ -191,6 +191,8 @@ export interface MeDto {
 /** 로그인 화면에 보일 로그인 방식. 지금은 로컬 계정만 있고, LDAP·SSO 등은 같은 자리에 더한다. */
 export interface AuthConfigDto {
   providers: { id: string; label: string }[];
+  /** 사용자가 아직 없어 첫 관리자를 만들어야 한다(웹은 로그인 대신 첫 설정 화면을 띄운다) */
+  setupRequired: boolean;
 }
 
 export type TokenScope = 'read' | 'read-write';
@@ -223,6 +225,8 @@ export interface Problem {
   code: ErrorCode;
   title: string;
   detail: string;
+  /** RATE_LIMITED: 다시 시도할 수 있을 때까지 남은 초(Retry-After 머리글과 같음) */
+  retryAfter?: number;
   /** VALIDATION_CYCLE: 순환 경로의 공정 ID */
   cycle?: string[];
   /** HIERARCHY_CYCLE: 새 상위부터 옮기려는 공정까지 거슬러 올라간 조상 경로 */

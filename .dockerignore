@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+data
+deliverables
+test
+Tevro
+.trash
+**/.obsidian
+*.log

@@ -316,6 +316,8 @@ TEVRO_DATA_DIR=$DATA_DIR
 TEVRO_TRIAL=$trial
 # Caddy가 HTTPS로 받으므로 로그인 쿠키에 항상 Secure를 붙인다.
 TEVRO_COOKIE_SECURE=1
+# Caddy 뒤에 있으므로 Caddy가 붙인 X-Forwarded-For로 접속 주소를 본다(로그인 실패 제한).
+TEVRO_TRUST_PROXY=1
 EOF
   )
   chmod 600 "$ENV_FILE"
@@ -348,7 +350,7 @@ EOF
       printf '  공용 비밀번호(TEVRO_PASSWORD)는 없앴습니다. 이제 각자 계정으로 로그인합니다.\n'
     fi
     if [ "$NEEDS_ADMIN" = 1 ]; then
-      warn "아직 사용자가 없어 아무도 로그인할 수 없습니다. 첫 관리자를 만드세요: sudo tevro-admin user create --username admin --role admin"
+      warn "아직 사용자가 없습니다. 브라우저로 https://$domain 에 들어가 첫 관리자를 만드세요. 설정 코드는 journalctl -u tevro | grep '설정 코드' 로 봅니다. 또는 sudo tevro-admin user create --username admin --role admin"
     fi
   fi
   printf '  상태·로그 systemctl status tevro / journalctl -u tevro -f\n'

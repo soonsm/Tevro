@@ -1,0 +1,21 @@
+# docker compose up -d   →  http://localhost:4000
+# 처음 켜면 'docker compose logs tevro'에 첫 관리자 설정 코드가 나온다.
+services:
+  tevro:
+    build: .
+    image: tevro
+    container_name: tevro
+    restart: unless-stopped
+    ports:
+      # 이 컴퓨터에서만 열린다. 다른 PC에서 쓰려면 HTTPS 리버스 프록시를 앞에 두고 그 프록시만 연결한다.
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - tevro-data:/data
+    environment:
+      # 리버스 프록시(Caddy, nginx 등) 뒤에 둘 때만 1로 바꾼다. 로그인 실패 제한이 사람마다의 주소를 보게 된다.
+      TEVRO_TRUST_PROXY: "0"
+      # HTTPS 프록시 뒤라면 1로 두어 세션 쿠키에 Secure를 붙인다(X-Forwarded-Proto를 보내는 프록시면 없어도 된다).
+      TEVRO_COOKIE_SECURE: "0"
+
+volumes:
+  tevro-data:

@@ -30,14 +30,27 @@ server.on('error', (error: NodeJS.ErrnoException) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Tevro 서버: http://${host === '127.0.0.1' ? 'localhost' : host}:${port}`);
+  const shown = host === '127.0.0.1' || host === '0.0.0.0' || host === '::' ? 'localhost' : host;
+  console.log(`Tevro 서버: http://${shown}:${port}${host === '0.0.0.0' || host === '::' ? ' (모든 네트워크 주소에서 받음)' : ''}`);
   if (trial) {
     console.log(`체험 모드: 예시 데이터 ${trial.datasets.map((item) => item.label).join(', ')}. 창마다 사본을 쓰고 원본은 바뀌지 않습니다.`);
     return;
   }
   console.log(`데이터 파일: ${databaseFile}`);
-  if (!accounts!.hasUsers()) {
-    console.warn('아직 사용자가 없어 아무도 로그인할 수 없습니다. 이 서버에서 첫 관리자를 만드세요: npm run admin -- user create --username <아이디> --role admin');
+  const setupCode = accounts!.beginSetup();
+  if (setupCode) {
+    console.warn(
+      [
+        '아직 사용자가 없습니다. 브라우저로 이 서버에 들어가 첫 관리자를 만드세요.',
+        `  설정 코드: ${setupCode}`,
+        '  (이 코드는 서버를 다시 켤 때마다 바뀌고, 첫 관리자를 만들면 더는 쓸 수 없습니다.)',
+        `  화면 대신 명령으로 만들 수도 있습니다: ${
+          process.env.TEVRO_IN_DOCKER === '1'
+            ? 'docker exec -it <컨테이너> node src/server/admin.ts user create --username <아이디> --role admin'
+            : 'npm run admin -- user create --username <아이디> --role admin'
+        }`,
+      ].join('\n'),
+    );
   }
 });
 

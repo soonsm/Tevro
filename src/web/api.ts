@@ -134,6 +134,9 @@ export const api = {
   me: () => session(request<MeDto>('GET', '/api/v1/auth/me')),
   login: (username: string, password: string) =>
     session(request<{ user: UserDto; csrfToken: string }>('POST', '/api/v1/auth/login', { username, password })),
+  /** 첫 설정: 서버 로그의 설정 코드로 첫 관리자를 만들고 바로 로그인한다 */
+  setup: (input: { code: string; username: string; displayName: string; password: string }) =>
+    session(request<{ user: UserDto; csrfToken: string }>('POST', '/api/v1/auth/setup', input)),
   logout: async () => {
     await request<void>('POST', '/api/v1/auth/logout');
     csrfToken = null;

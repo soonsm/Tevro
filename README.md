@@ -19,7 +19,7 @@
 - 기한·담당자: 공정마다 기한(날짜)과 담당자(Tevro 사용자). 기한이 지난 공정은 '지연'으로 표시하고, 남은 공정을 기한 순으로 보며 '내가 맡은 일'만 거를 수 있음. 상위보다 늦은 하위 기한은 막지 않고 알림
 - 카드 위치 저장: 끌어서 옮긴 자리를 저장해 모두가 같은 위치를 봄. [자동 정렬]은 그 층의 저장 위치를 지우고 다시 배치
 - 템플릿: 공용 템플릿(관리자가 관리, 모두 사용)과 내 템플릿(만든 사람만). 빈 템플릿 만들기, 프로젝트·템플릿을 복사해 템플릿으로 저장, 템플릿으로 새 프로젝트 만들기(진행 상태 초기화, Jira 링크 비움, Confluence 링크 복사), 출처(템플릿 이름·판) 기록. 아래 '템플릿'
-- 로그인과 권한: 사용자 계정(열람자·편집자·관리자), 웹 세션, CLI·AI 에이전트용 개인 액세스 토큰(read·read-write, 만료일). 첫 관리자는 서버 관리 명령으로(아래 '로그인과 권한')
+- 로그인과 권한: 사용자 계정(열람자·편집자·관리자), 웹 세션, CLI·AI 에이전트용 개인 액세스 토큰(read·read-write, 만료일). 첫 관리자는 처음 켤 때 웹의 첫 설정 화면에서(서버 로그의 설정 코드 필요) 또는 서버 관리 명령으로(아래 '로그인과 권한')
 - CLI: 화면과 같은 서버 API를 쓰고 `--json` 출력 제공
 - 저장: SQLite 파일 하나(`data/tevro.db`)
 
@@ -36,9 +36,19 @@
 ```sh
 npm install
 npm run build   # 웹 화면 빌드
-npm run admin -- user create --username admin --role admin   # 첫 관리자(비밀번호는 두 번 물음)
-npm start       # http://localhost:4000 에서 그 계정으로 로그인
+npm start       # http://localhost:4000
 ```
+
+처음 켜면 사용자가 없어 서버 로그에 **설정 코드**(예: `K7QM-3XRD-9WPA-HT4C`)가 나옵니다. 브라우저로 들어가면 첫 설정 화면이 뜨고, 그 코드를 넣어 첫 관리자를 만듭니다. 화면 대신 `npm run admin -- user create --username admin --role admin`으로 만들어도 됩니다.
+
+### Docker로 실행
+
+```sh
+docker compose up -d            # 이미지를 빌드하고 http://localhost:4000 에서 엽니다
+docker compose logs tevro       # 첫 관리자 설정 코드
+```
+
+`docker` 명령만 쓸 때는 `docker build -t tevro .` 뒤 `docker run -d --name tevro -p 127.0.0.1:4000:4000 -v tevro-data:/data tevro`. 데이터는 `/data` 볼륨의 `tevro.db` 하나입니다. 관리 명령은 `docker exec -it tevro node src/server/admin.ts user list`처럼 씁니다. 다른 PC에서 쓰려면 HTTPS 리버스 프록시(Caddy, nginx 등)를 앞에 두고 `TEVRO_TRUST_PROXY=1`을 켭니다([`compose.yaml`](compose.yaml)의 주석).
 
 예시 프로젝트(공정 12개, 그중 '애플리케이션 개발' 아래 하위 공정 3개, 연결 10개)를 만들려면, 화면 오른쪽 위 계정 메뉴의 **내 토큰**에서 read-write 토큰을 발급한 뒤 서버를 켠 채로 다른 터미널에서 실행합니다. CLI로 데이터를 넣으므로 에이전트가 쓰는 흐름도 함께 볼 수 있습니다. 데이터는 체험 모드와 같은 [`trial/developer.json`](trial/README.md)입니다(일반직용: `npm run demo -- general`).
 
@@ -54,6 +64,7 @@ TEVRO_TOKEN=tevro_pat_… npm run demo
 | `TEVRO_SERVER` | `http://localhost:4000` | CLI가 접속할 서버 |
 | `TEVRO_TOKEN` | 없음 | CLI: 개인 액세스 토큰. 없으면 `--token-file`, 그다음 `config set-token`으로 저장한 파일(`~/.config/tevro/token`) |
 | `TEVRO_COOKIE_SECURE` | 없음 | 서버: `1`이면 로그인 쿠키에 항상 Secure. 없으면 프록시의 `X-Forwarded-Proto: https`를 보고 붙임 |
+| `TEVRO_TRUST_PROXY` | 없음 | 서버: `1`이면 리버스 프록시가 붙인 `X-Forwarded-For`의 마지막 값을 접속 주소로 봄(로그인 실패 제한). 프록시 뒤에서만 켤 것 |
 | `TEVRO_TRIAL` | 없음 | `1`이면 체험 모드(아래). 데이터 파일과 로그인을 쓰지 않음 |
 
 첫 버전으로 만든 `data/tevro.db`는 서버가 시작할 때 계층을 담을 수 있게 자동으로 올립니다(기존 공정은 모두 최상위가 됨). 올리기 전 파일은 같은 폴더에 `tevro.db.schema1-….bak`으로 남습니다. 자세한 내용은 [`Tevro/db-schema.md`](Tevro/db-schema.md) 7장에 있습니다.
@@ -78,8 +89,9 @@ TEVRO_TOKEN=tevro_pat_… npm run demo
 | 편집자 | 프로젝트·공정·연결·상태 바꾸기 |
 | 관리자 | 편집자 + 사용자 관리(웹의 계정 메뉴 → 사용자 관리), 남의 토큰 폐기 |
 
-- **첫 관리자와 비상 관리:** 서버 호스트에서 `npm run admin -- user create | list | reset-password | set-role | activate | deactivate`. 비밀번호는 명령행 인자로 받지 않고 터미널에서 묻거나 표준 입력으로 받습니다. 웹에서 먼저 가입한 사람이 관리자가 되는 화면은 없습니다.
-- **웹:** 서버에 저장하는 세션 + HttpOnly·SameSite=Lax 쿠키. 바꾸는 요청은 CSRF 값과 출처(Origin)를 확인합니다. 8시간 안 쓰면, 길어도 7일이면 다시 로그인합니다. 같은 계정으로 5번 틀리면 15분 잠깁니다. 비밀번호는 10자 이상(Argon2id로 저장).
+- **첫 관리자:** 사용자가 없으면 서버가 시작할 때 로그에 설정 코드를 찍습니다. 웹의 첫 설정 화면에서 그 코드를 넣어야 관리자를 만들 수 있어, 인터넷에 막 올린 서버를 남이 먼저 차지하지 못합니다. 코드는 서버를 켤 때마다 바뀌고 첫 관리자를 만들면 더 쓸 수 없습니다.
+- **비상 관리:** 서버 호스트에서 `npm run admin -- user create | list | reset-password | set-role | activate | deactivate`. 비밀번호는 명령행 인자로 받지 않고 터미널에서 묻거나 표준 입력으로 받습니다.
+- **웹:** 서버에 저장하는 세션 + HttpOnly·SameSite=Lax 쿠키. 바꾸는 요청은 CSRF 값과 출처(Origin)를 확인합니다. 8시간 안 쓰면, 길어도 7일이면 다시 로그인합니다. 계정은 잠그지 않고 접속 주소별로 막습니다: 15분 안에 같은 곳에서 같은 아이디로 5번, 아이디와 상관없이 20번 틀리면 그곳에서만 15분 동안 시도할 수 없습니다(설정 코드도 같음). 그래서 남이 일부러 틀려도 주인은 자기 자리에서 들어옵니다. 비밀번호는 10자 이상(Argon2id로 저장).
 - **CLI·AI 에이전트:** 웹 계정 메뉴의 **내 토큰**에서 개인 액세스 토큰(`tevro_pat_…`)을 발급합니다. 범위는 read 또는 read-write, 만료는 1~365일(기본 30일)이고, 할 수 있는 일은 토큰 범위와 발급한 사람의 역할 중 좁은 쪽입니다. 서버에는 해시만 남습니다. 토큰으로는 새 토큰 발급과 사용자 관리를 할 수 없습니다.
 - **외부 계정 연동 대비:** 사용자(`users`)와 로그인 수단(`auth_identities`: 공급자 + 공급자 안의 ID)을 나눠 두었습니다. OIDC·LDAP은 `src/server/accounts.ts`의 `PasswordProvider`를 더해 붙이고, 사용자 ID와 기록은 그대로입니다.
 
@@ -143,7 +155,7 @@ node src/cli/main.ts template delete <템플릿 ID> --yes
 
 ## 인터넷에 올리기
 
-Oracle Cloud 무료 가상 서버에 올리는 스크립트와 안내가 [`deploy/oracle/`](deploy/oracle/README.md)에 있습니다. 서버에서 명령 두 줄로 Node.js·Caddy 설치, 빌드, systemd 서비스, HTTPS 인증서, 방화벽 설정까지 끝납니다. 보통 서버는 계정으로 로그인하고, 첫 관리자는 서버에서 `sudo tevro-admin`으로 만듭니다. 체험 서버로 열려면 `--trial`을 붙입니다.
+Oracle Cloud 무료 가상 서버에 올리는 스크립트와 안내가 [`deploy/oracle/`](deploy/oracle/README.md)에 있습니다. 서버에서 명령 두 줄로 Node.js·Caddy 설치, 빌드, systemd 서비스, HTTPS 인증서, 방화벽 설정까지 끝납니다. 보통 서버는 계정으로 로그인하고, 첫 관리자는 설치 중에 터미널에서, 또는 웹의 첫 설정 화면이나 `sudo tevro-admin`으로 만듭니다. 직접 꾸린 서버라면 위 'Docker로 실행'도 쓸 수 있습니다. 체험 서버로 열려면 `--trial`을 붙입니다.
 
 ## 확인 시나리오
 
@@ -185,6 +197,7 @@ npm run typecheck  # TypeScript 검사
 | `scripts` | `demo`(예시 데이터를 CLI로 넣기), `dev`(개발 서버) |
 | `trial` | 체험 모드와 `npm run demo`가 쓰는 예시 데이터(JSON)와 형식 안내 |
 | `deploy/oracle` | Oracle Cloud 설치 스크립트와 안내 |
+| `Dockerfile`, `compose.yaml` | Docker 이미지와 실행 예시 |
 | `test` | `node:test` 테스트(도메인 규칙, API, CLI, 스키마 마이그레이션, 선 배치, 체험 모드, 로그인·권한, 템플릿) |
 | `Tevro/` | 요구사항·결정 기록 문서(Obsidian) |
 | `Tevro/db-schema.md` | 테이블 설계서(ERD, 컬럼 설명, 제약) |

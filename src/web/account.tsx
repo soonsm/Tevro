@@ -86,6 +86,109 @@ export function LoginScreen({ onLogin }: { onLogin: (user: UserDto) => void }) {
   );
 }
 
+/** 첫 설정: 사용자가 하나도 없을 때 서버 로그의 설정 코드를 받아 첫 관리자를 만든다. */
+export function SetupScreen({ onDone, onLogin }: { onDone: (user: UserDto) => void; onLogin: () => void }) {
+  const [code, setCode] = useState('');
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const mismatch = confirm !== '' && confirm !== password;
+  const short = password !== '' && [...password].length < 10;
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const { user } = await api.setup({ code: code.trim(), username: username.trim(), displayName: displayName.trim(), password });
+      onDone(user);
+    } catch (failure) {
+      // 그사이 다른 사람이 먼저 설정을 마쳤으면 로그인 화면으로 보낸다.
+      if (failure instanceof ApiFailure && /이미 사용자가 있어/.test(failure.problem.detail)) onLogin();
+      else setError(errorText(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="app">
+      <header className="topbar">
+        <span className="brand">Tevro</span>
+      </header>
+      <div className="center-message">
+        <form className="message-card setup-card" onSubmit={submit}>
+          <h1>첫 관리자 만들기</h1>
+          <p className="panel-note">
+            아직 사용자가 없습니다. 서버를 켤 때 로그에 나온 <b>설정 코드</b>를 넣고 관리자 계정을 만드세요. 관리자는 다른 사람의 계정을 만들 수 있습니다.
+          </p>
+          {error && (
+            <p className="panel-note is-error" role="alert">
+              {error}
+            </p>
+          )}
+          <label className="field-label" htmlFor="setup-code">
+            설정 코드
+          </label>
+          <input
+            id="setup-code"
+            className="input setup-code"
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            placeholder="XXXX-XXXX-XXXX-XXXX"
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+          />
+          <p className="panel-note is-small">
+            서버 로그에서 찾습니다. 예: <code>docker logs tevro</code>, <code>journalctl -u tevro</code>
+          </p>
+          <label className="field-label" htmlFor="setup-username">
+            아이디
+          </label>
+          <input id="setup-username" className="input" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+          <label className="field-label" htmlFor="setup-name">
+            이름 (선택)
+          </label>
+          <input id="setup-name" className="input" autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+          <label className="field-label" htmlFor="setup-password">
+            비밀번호 (10자 이상)
+          </label>
+          <input
+            id="setup-password"
+            className="input"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <label className="field-label" htmlFor="setup-confirm">
+            비밀번호 확인
+          </label>
+          <input
+            id="setup-confirm"
+            className="input"
+            type="password"
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
+          />
+          {short && <p className="panel-note is-small is-error">비밀번호는 10자 이상이어야 합니다.</p>}
+          {mismatch && <p className="panel-note is-small is-error">비밀번호가 서로 다릅니다.</p>}
+          <button
+            type="submit"
+            className="button primary"
+            disabled={busy || !code.trim() || !username.trim() || !password || short || confirm !== password}
+          >
+            {busy ? '만드는 중…' : '관리자 만들고 시작하기'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 type AccountDialog = 'tokens' | 'password' | 'users' | null;
 
 /** 상단 막대 오른쪽의 계정 메뉴 */

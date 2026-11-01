@@ -73,7 +73,7 @@ sudo bash install.sh --domain <도메인> --branch claude/zealous-ride-imn72j
 
 ## 5. 접속과 첫 관리자
 
-첫 관리자를 아직 안 만들었다면 서버에서 만듭니다. 비밀번호는 화면에 보이지 않게 두 번 묻습니다.
+첫 관리자를 아직 안 만들었다면 두 가지 방법이 있습니다. 브라우저로 주소에 들어가면 첫 설정 화면이 뜹니다. 거기에 서버 로그의 설정 코드(`journalctl -u tevro | grep '설정 코드'`)를 넣고 관리자를 만듭니다. 또는 서버에서 아래 명령으로 만듭니다. 비밀번호는 화면에 보이지 않게 두 번 묻습니다.
 
 ```sh
 sudo tevro-admin user create --username admin --role admin
@@ -87,7 +87,7 @@ sudo tevro-admin user create --username admin --role admin
 | 편집자 | 프로젝트·공정·연결·상태 바꾸기 |
 | 관리자 | 편집자 + 사용자 추가·역할 변경·비활성화·비밀번호 재설정, 남의 토큰 폐기 |
 
-비밀번호를 5번 연속 틀리면 그 계정은 15분 동안 잠깁니다. 로그인한 뒤 8시간 동안 안 쓰면, 계속 써도 7일이 지나면 다시 로그인합니다.
+계정은 잠기지 않습니다. 대신 15분 안에 같은 접속 주소에서 같은 아이디로 5번, 아이디와 상관없이 20번 틀리면 그 주소에서만 15분 동안 시도할 수 없습니다. 설치 스크립트는 Caddy 뒤이므로 `TEVRO_TRUST_PROXY=1`로 사람마다의 주소를 봅니다. 로그인한 뒤 8시간 동안 안 쓰면, 계속 써도 7일이 지나면 다시 로그인합니다.
 
 예시 프로젝트를 넣어 보려면, 계정 메뉴의 **내 토큰**에서 read-write 토큰을 발급한 뒤 서버에서(체험 모드가 아닐 때):
 
@@ -138,7 +138,7 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 | 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·체험 모드를 그대로 씀). 스크립트도 먼저 최신으로 받아 그것으로 실행합니다 |
 | 체험 모드 켜기·끄기 | 같은 명령에 `--trial` 또는 `--no-trial`. 한 번 정하면 이후 갱신에도 유지됩니다(7장) |
 | 도메인 바꾸기 | 새 도메인의 DNS를 서버 공인 IP로 건 뒤 `sudo bash /opt/tevro/deploy/oracle/install.sh --domain <새 도메인>`. 이후 갱신에도 새 도메인이 쓰이고, 예전 도메인으로는 더는 열리지 않습니다. 데이터와 계정은 그대로입니다 |
-| 사용자 관리(서버에서) | `sudo tevro-admin user list`, `user create --username <아이디> --role viewer\|editor\|admin`, `user reset-password <아이디>`(잠금도 풂), `user set-role <아이디> <역할>`, `user activate\|deactivate <아이디>`. 웹의 사용자 관리와 같은 일을 하며, 관리자가 로그인할 수 없을 때 씁니다 |
+| 사용자 관리(서버에서) | `sudo tevro-admin user list`, `user create --username <아이디> --role viewer\|editor\|admin`, `user reset-password <아이디>`, `user set-role <아이디> <역할>`, `user activate\|deactivate <아이디>`. 웹의 사용자 관리와 같은 일을 하며, 관리자가 로그인할 수 없을 때 씁니다 |
 | 상태·로그 | `systemctl status tevro`, `journalctl -u tevro -f`, 인증서는 `journalctl -u caddy -f` |
 | 다시 시작 | `sudo systemctl restart tevro` |
 | 데이터 위치 | `/var/lib/tevro/data/tevro.db`(같은 폴더의 `-wal`·`-shm` 파일까지 한 묶음) |
@@ -158,6 +158,6 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 | --- | --- |
 | 브라우저가 접속하지 못함 | 2번의 수신 규칙(80·443), `nslookup <도메인>`이 공인 IP인지, `sudo ss -ltnp \| grep -E ':(80\|443) '`에 caddy가 있는지 |
 | 인증서 오류 | DNS가 반영되기 전에 발급을 시도한 경우가 많습니다. 몇 분 기다리거나 `sudo systemctl restart caddy`. 같은 도메인으로 발급에 계속 실패하면 Let's Encrypt가 한동안 막으므로 `journalctl -u caddy`의 원인을 먼저 고칩니다 |
-| 로그인이 안 됨 | 사용자가 있는지 `sudo tevro-admin user list`. 잠겼거나 비밀번호를 잊었으면 `sudo tevro-admin user reset-password <아이디>`. 비활성 계정은 `user activate` |
+| 로그인이 안 됨 | 사용자가 있는지 `sudo tevro-admin user list`. 비밀번호를 잊었으면 `sudo tevro-admin user reset-password <아이디>`. 비활성 계정은 `user activate` |
 | 설치가 빌드 단계에서 멈춤 | 메모리 부족일 수 있습니다. `free -h`로 스왑을 확인하거나 메모리가 더 큰 Shape를 씁니다 |
 | `502` 오류 | Tevro 서버가 멈춘 상태입니다. `journalctl -u tevro -n 50` |

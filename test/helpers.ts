@@ -22,12 +22,16 @@ export const ADMIN_PASSWORD = 'admin password 1';
  * 빈 DB로 서버를 띄운다. 파일 경로를 주면 그 파일을 쓴다(재시작 시험용).
  * 관리자 admin(비밀번호 ADMIN_PASSWORD)과 그 read-write 토큰을 만들어 둔다. now를 주면 계정 시각을 그 시계로 잰다.
  */
-export async function startServer(databaseFile = ':memory:', webRoot?: string, options: { now?: () => number } = {}): Promise<TestServer> {
+export async function startServer(
+  databaseFile = ':memory:',
+  webRoot?: string,
+  options: { now?: () => number; trustProxy?: boolean } = {},
+): Promise<TestServer> {
   const db = openDatabase(databaseFile);
   const accounts = createAccounts(db, { now: options.now });
   const admin = accounts.findUser('admin') ?? (await accounts.createUser({ username: 'admin', role: 'admin', password: ADMIN_PASSWORD }));
   const token = accounts.createToken({ user: admin, via: 'session' }, { name: 'test', scope: 'read-write' }).token;
-  const server = createApp({ store: createStore(db), accounts, webRoot });
+  const server = createApp({ store: createStore(db), accounts, webRoot, trustProxy: options.trustProxy ?? false });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   async function callWith(headers: Record<string, string>, method: string, path: string, body?: unknown) {

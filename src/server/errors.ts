@@ -13,7 +13,7 @@ const TITLES: Record<ErrorCode, string> = {
   NOT_FOUND: '대상 없음',
   UNAUTHENTICATED: '로그인 필요',
   FORBIDDEN: '권한 없음',
-  ACCOUNT_LOCKED: '계정 잠김',
+  RATE_LIMITED: '잠시 후 다시 시도',
   TRIAL_SESSION_REQUIRED: '체험 창 정보 없음',
   INTERNAL: '서버 오류',
 };

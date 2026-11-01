@@ -2,7 +2,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { STATUS_LABELS, TRANSITION_LABELS, isOverdue, localToday, type Edge, type Summary } from '../shared/domain.ts';
 import type { AutoTransition, GraphDto, PersonDto, ProjectDto, TaskDto, TaskInput, TemplateSummaryDto, TrialStatus, UserDto } from '../shared/types.ts';
-import { AccountMenu, LoginScreen } from './account.tsx';
+import { AccountMenu, LoginScreen, SetupScreen } from './account.tsx';
 import { ApiFailure, api, whenSessionEnds } from './api.ts';
 import { DeleteTaskDialog, MoveTaskDialog, SwitchDatasetDialog } from './dialogs.tsx';
 import { GraphCanvas } from './GraphCanvas.tsx';
@@ -42,6 +42,7 @@ type Gate =
   | { kind: 'loading' }
   | { kind: 'trial' }
   | { kind: 'login' }
+  | { kind: 'setup' }
   | { kind: 'signed-in'; user: UserDto }
   | { kind: 'error'; detail: string };
 
@@ -64,8 +65,11 @@ export function App() {
       }
       setGate({ kind: 'signed-in', user: (await api.me()).user });
     } catch (error) {
-      if (error instanceof ApiFailure && error.problem.code === 'UNAUTHENTICATED') setGate({ kind: 'login' });
-      else setGate({ kind: 'error', detail: error instanceof ApiFailure ? error.problem.detail : String(error) });
+      if (error instanceof ApiFailure && error.problem.code === 'UNAUTHENTICATED') {
+        // 사용자가 아직 없으면 로그인 대신 첫 설정 화면을 띄운다.
+        const config = await api.authConfig().catch(() => null);
+        setGate({ kind: config?.setupRequired ? 'setup' : 'login' });
+      } else setGate({ kind: 'error', detail: error instanceof ApiFailure ? error.problem.detail : String(error) });
     }
   }
 
@@ -84,6 +88,8 @@ export function App() {
       return <Workspace key={gate.user.id} user={gate.user} onLogout={() => void logout()} />;
     case 'login':
       return <LoginScreen onLogin={(user) => setGate({ kind: 'signed-in', user })} />;
+    case 'setup':
+      return <SetupScreen onDone={(user) => setGate({ kind: 'signed-in', user })} onLogin={() => setGate({ kind: 'login' })} />;
     default:
       return (
         <div className="app">

@@ -4,6 +4,7 @@ import { argon2, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CreatedTokenDto, Role, TokenDto, TokenScope, UserDto } from '../shared/types.ts';
 import { ApiError, invalidInput } from './errors.ts';
 import { newId } from './ids.ts';
+import { createLimiter } from './limiter.ts';
 import type { Db } from './store.ts';
 
 export type Accounts = ReturnType<typeof createAccounts>;
@@ -16,9 +17,13 @@ export const POLICY = {
   /** 토큰 만료: 기본 30일, 최대 1년 */
   tokenDefaultDays: 30,
   tokenMaxDays: 365,
-  /** 같은 계정으로 5번 연속 틀리면 15분 잠금 */
-  lockAfterFailures: 5,
-  lockMs: 15 * 60 * 1000,
+  /**
+   * 로그인 실패 제한(2026-11-01, ADR-0008). 계정을 잠그지 않고 접속 주소 기준으로 막는다.
+   * 15분 안에 같은 주소에서 같은 아이디로 5번, 아이디와 상관없이 20번 틀리면 그 주소만 15분 동안 막는다.
+   */
+  failuresPerUser: 5,
+  failuresPerClient: 20,
+  failureWindowMs: 15 * 60 * 1000,
   /** 비밀번호: 10자 이상, 조합 규칙 없음 */
   passwordMin: 10,
   passwordMax: 256,
@@ -64,8 +69,7 @@ interface IdentityRow {
   subject: string;
   user_id: string;
   secret_hash: string | null;
-  failed_count: number;
-  locked_until: string | null;
+  // failed_count·locked_until 칸은 예전 계정 잠금용이다. 지금은 쓰지 않는다(ADR-0008).
 }
 
 interface SessionRow {
@@ -90,6 +94,10 @@ interface TokenRow {
 export function createAccounts(db: Db, options: { now?: () => number; providers?: PasswordProvider[] } = {}) {
   const now = options.now ?? Date.now;
   const iso = (ms = now()) => new Date(ms).toISOString();
+  const perUser = createLimiter({ max: POLICY.failuresPerUser, windowMs: POLICY.failureWindowMs, now });
+  const perClient = createLimiter({ max: POLICY.failuresPerClient, windowMs: POLICY.failureWindowMs, now });
+  // 첫 관리자 설정 코드. 사용자가 없을 때 서버가 만들어 로그에 찍고, 웹의 첫 설정 화면에서 받는다(beginSetup, completeSetup).
+  let setupCode: string | null = null;
 
   const sql = {
     countUsers: db.prepare<[], { count: number }>('SELECT COUNT(*) AS count FROM users'),
@@ -112,9 +120,6 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
     ),
     setSecret: db.prepare<[string, string, string]>(
       'UPDATE auth_identities SET secret_hash = ?, failed_count = 0, locked_until = NULL WHERE provider = ? AND subject = ?',
-    ),
-    setFailures: db.prepare<[number, string | null, string, string]>(
-      'UPDATE auth_identities SET failed_count = ?, locked_until = ? WHERE provider = ? AND subject = ?',
     ),
     insertSession: db.prepare<[string, string, string, string, string, string]>(
       'INSERT INTO sessions (id_hash, user_id, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -173,7 +178,7 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
     return { cookie, csrfToken };
   }
 
-  return {
+  const api = {
     providers: () => [...providers.values()].map(({ id, label }) => ({ id, label })),
     hasUsers: () => sql.countUsers.get()!.count > 0,
     listUsers: () => sql.listUsers.all().map(toUserDto),
@@ -184,7 +189,10 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
     },
 
     /** 사용자와 로컬 비밀번호를 함께 만든다. 비밀번호를 주지 않으면 외부 계정 공급자로만 로그인하는 사용자다. */
-    async createUser(input: { username?: unknown; displayName?: unknown; role?: unknown; password?: unknown }): Promise<UserDto> {
+    async createUser(
+      input: { username?: unknown; displayName?: unknown; role?: unknown; password?: unknown },
+      { onlyIfNoUsers = false }: { onlyIfNoUsers?: boolean } = {},
+    ): Promise<UserDto> {
       const username = readUsername(input.username);
       const displayName = readDisplayName(input.displayName) ?? username;
       const role = readRole(input.role ?? 'viewer');
@@ -203,7 +211,8 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
         last_login_at: null,
       };
       db.transaction(() => {
-        // 해시를 계산하는 사이 같은 아이디가 생겼을 수 있어 트랜잭션 안에서 다시 본다.
+        // 해시를 계산하는 사이 같은 아이디(첫 설정이면 다른 사용자)가 생겼을 수 있어 트랜잭션 안에서 다시 본다.
+        if (onlyIfNoUsers && sql.countUsers.get()!.count > 0) throw setupDone();
         if (sql.getUserByName.get(username)) throw invalidInput(`이미 있는 아이디입니다: ${username}`);
         sql.insertUser.run(row);
         if (hash !== null) sql.insertIdentity.run(LOCAL, username, row.id, hash, at);
@@ -226,7 +235,7 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
       }).immediate();
     },
 
-    /** 로컬 비밀번호를 정한다(관리자 재설정, 관리 명령). 없으면 만든다. 잠금을 풀고 기존 세션을 끊는다. */
+    /** 로컬 비밀번호를 정한다(관리자 재설정, 관리 명령). 없으면 만든다. 기존 세션을 끊는다. */
     async setPassword(userId: string, password: unknown): Promise<void> {
       const user = requireUser(userId);
       const hash = await hashPassword(readPassword(password));
@@ -257,8 +266,14 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
       }).immediate();
     },
 
-    /** 아이디·비밀번호로 로그인해 새 세션을 만든다. 같은 계정으로 연속해서 틀리면 잠근다. */
-    async login(input: { provider?: unknown; username?: unknown; password?: unknown }): Promise<{ user: UserDto; cookie: string; csrfToken: string }> {
+    /**
+     * 아이디·비밀번호로 로그인해 새 세션을 만든다. client는 요청한 곳의 주소다.
+     * 실패가 쌓이면 그 주소에서만 잠시 막는다. 계정은 잠그지 않는다.
+     */
+    async login(
+      input: { provider?: unknown; username?: unknown; password?: unknown },
+      client = 'unknown',
+    ): Promise<{ user: UserDto; cookie: string; csrfToken: string }> {
       const providerId = input.provider === undefined ? LOCAL : input.provider;
       const provider = typeof providerId === 'string' ? providers.get(providerId) : undefined;
       if (!provider) throw invalidInput(`로그인 방식이 없습니다: ${String(providerId)}`);
@@ -266,26 +281,57 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
         throw invalidInput('아이디와 비밀번호를 입력하세요.');
       }
       const username = input.username.trim();
-      const failed = new ApiError(401, 'UNAUTHENTICATED', '아이디 또는 비밀번호가 맞지 않습니다.');
-      const before = sql.getIdentity.get(provider.id, username);
-      if (before?.locked_until && Date.parse(before.locked_until) > now()) throw lockedError(before.locked_until);
+      const userKey = `${client}\n${provider.id}\n${username.toLowerCase()}`;
+      const wait = perClient.blocked(client) ?? perUser.blocked(userKey);
+      if (wait !== null) throw rateLimited(wait);
 
       const verified = await provider.verify(username, input.password);
-      const identity = verified ? sql.getIdentity.get(provider.id, verified.subject) : before;
       if (!verified) {
-        if (identity) {
-          const count = identity.failed_count + 1;
-          const lock = count >= POLICY.lockAfterFailures ? iso(now() + POLICY.lockMs) : null;
-          sql.setFailures.run(lock ? 0 : count, lock, provider.id, identity.subject);
-          if (lock) throw lockedError(lock);
-        }
-        throw failed;
+        perClient.fail(client);
+        perUser.fail(userKey);
+        throw new ApiError(401, 'UNAUTHENTICATED', '아이디 또는 비밀번호가 맞지 않습니다.');
       }
+      const identity = sql.getIdentity.get(provider.id, verified.subject);
       // 외부 계정 공급자가 확인했어도 Tevro에 연결된 사용자가 없으면 들어올 수 없다(관리자가 먼저 사용자를 만든다).
       if (!identity) throw new ApiError(403, 'FORBIDDEN', 'Tevro에 등록되지 않은 계정입니다. 관리자에게 사용자 등록을 요청하세요.');
       const user = requireUser(identity.user_id);
       if (user.active !== 1) throw new ApiError(403, 'FORBIDDEN', '비활성화된 계정입니다. 관리자에게 문의하세요.');
-      sql.setFailures.run(0, null, provider.id, identity.subject);
+      perUser.reset(userKey);
+      const session = startSession(user.id);
+      return { user: toUserDto(requireUser(user.id)), ...session };
+    },
+
+    /** 사용자가 없으면 첫 관리자 설정 코드를 만들어(이미 있으면 그대로) 돌려준다. 사용자가 있으면 null. 서버가 시작할 때 로그에 찍는다. */
+    beginSetup(): string | null {
+      if (sql.countUsers.get()!.count > 0) {
+        setupCode = null;
+        return null;
+      }
+      setupCode ??= newSetupCode();
+      return setupCode;
+    },
+
+    /** 첫 설정이 필요한지(사용자가 없는지). 웹이 로그인 화면 대신 첫 설정 화면을 띄울 때 본다. */
+    setupRequired: () => sql.countUsers.get()!.count === 0,
+
+    /** 웹의 첫 설정 화면: 설정 코드가 맞으면 첫 관리자를 만들고 바로 로그인한다. */
+    async completeSetup(
+      input: { code?: unknown; username?: unknown; displayName?: unknown; password?: unknown },
+      client = 'unknown',
+    ): Promise<{ user: UserDto; cookie: string; csrfToken: string }> {
+      if (sql.countUsers.get()!.count > 0) throw setupDone();
+      const wait = perClient.blocked(client);
+      if (wait !== null) throw rateLimited(wait);
+      if (!setupCode) throw new ApiError(403, 'FORBIDDEN', '설정 코드가 아직 없습니다. 서버를 다시 시작하면 로그에 설정 코드가 나옵니다.');
+      if (typeof input.code !== 'string' || !sameCode(input.code, setupCode)) {
+        perClient.fail(client);
+        throw new ApiError(403, 'FORBIDDEN', '설정 코드가 맞지 않습니다. 서버 로그에 나온 코드를 그대로 입력하세요.');
+      }
+      const user = await api.createUser(
+        { username: input.username, displayName: input.displayName, password: input.password ?? '', role: 'admin' },
+        { onlyIfNoUsers: true },
+      );
+      setupCode = null;
       const session = startSession(user.id);
       return { user: toUserDto(requireUser(user.id)), ...session };
     },
@@ -366,11 +412,36 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
       return toTokenDto(row);
     },
   };
+  return api;
+}
 
-  function lockedError(until: string): ApiError {
-    const minutes = Math.max(1, Math.ceil((Date.parse(until) - now()) / 60_000));
-    return new ApiError(429, 'ACCOUNT_LOCKED', `비밀번호를 여러 번 틀려 계정이 잠겼습니다. ${minutes}분 뒤에 다시 시도하거나 관리자에게 재설정을 요청하세요.`);
-  }
+function rateLimited(waitMs: number): ApiError {
+  const seconds = Math.max(1, Math.ceil(waitMs / 1000));
+  const minutes = Math.ceil(seconds / 60);
+  return new ApiError(429, 'RATE_LIMITED', `실패가 많아 이 접속 주소에서는 잠시 시도할 수 없습니다. ${minutes}분 뒤에 다시 시도하세요.`, {
+    retryAfter: seconds,
+  });
+}
+
+function setupDone(): ApiError {
+  return new ApiError(403, 'FORBIDDEN', '이미 사용자가 있어 첫 설정을 할 수 없습니다. 로그인하세요.');
+}
+
+// 설정 코드: 헷갈리는 글자(0·O·1·I 등)를 뺀 32글자에서 16자(80비트)를 4자씩 끊는다. 예: K7QM-3XRD-9WPA-HT4C
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function newSetupCode(): string {
+  const bytes = randomBytes(16);
+  const chars = [...bytes].map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]);
+  return [0, 4, 8, 12].map((at) => chars.slice(at, at + 4).join('')).join('-');
+}
+
+/** 대소문자·공백·하이픈은 가리지 않고 비교한다. */
+function sameCode(given: string, expected: string): boolean {
+  const normalize = (text: string) => Buffer.from(text.toUpperCase().replace(/[\s-]/g, ''), 'utf8');
+  const a = normalize(given);
+  const b = normalize(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function toUserDto(row: UserRow): UserDto {

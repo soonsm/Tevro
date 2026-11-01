@@ -205,8 +205,8 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 | `subject` | TEXT | N | | PK | 공급자 안의 ID. `local`은 아이디. `COLLATE NOCASE` |
 | `user_id` | TEXT | N | | FK | `users.id`, ON DELETE CASCADE |
 | `secret_hash` | TEXT | Y | NULL | | `local`의 비밀번호 해시. PHC 문자열 `$argon2id$v=19$m=19456,t=2,p=1$<솔트>$<해시>`(Node.js 내장 `crypto.argon2`). 외부 공급자는 NULL |
-| `failed_count` | INTEGER | N | 0 | | 연속으로 틀린 횟수. 맞으면 0 |
-| `locked_until` | TEXT | Y | NULL | | 5번 연속 틀리면 15분 뒤 시각을 넣는다. 그때까지는 맞는 비밀번호로도 못 들어온다 |
+| `failed_count` | INTEGER | N | 0 | | 쓰지 않음(2026-11-01부터). 예전 계정 잠금의 연속 실패 횟수. 지금은 접속 주소별로 메모리에서 센다(ADR-0004 추기) |
+| `locked_until` | TEXT | Y | NULL | | 쓰지 않음(2026-11-01부터). 예전 계정 잠금의 해제 시각 |
 | `created_at` | TEXT | N | | | 만든 시각 |
 
 인덱스: `auth_identities_by_user (user_id)`.

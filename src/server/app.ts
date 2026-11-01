@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, join, resolve, sep } from 'node:path';
 import { POLICY, type Accounts, type Actor } from './accounts.ts';
 import { ApiError, internalError, invalidInput } from './errors.ts';
-import type { ProjectDto } from '../shared/types.ts';
+import type { AuthConfigDto, ProjectDto } from '../shared/types.ts';
 import type { Store } from './store.ts';
 import { readSandboxId, type Sandbox, type Trial } from './trial.ts';
 
@@ -60,6 +60,8 @@ interface Request {
   setCookie: (value: string) => void;
   /** 요청이 HTTPS로 들어왔는지(Caddy 같은 프록시 뒤면 X-Forwarded-Proto) */
   secure: boolean;
+  /** 요청한 곳의 주소(로그인 실패 제한에 쓴다). 프록시를 믿으면 X-Forwarded-For의 마지막 값 */
+  client: string;
   /** 체험 모드에서 요청을 보낸 창의 체험 ID와 사본 */
   sandboxId?: string;
   sandbox?: Sandbox;
@@ -83,10 +85,16 @@ interface AppOptions {
   /** 체험 모드: 창마다 예시 데이터의 사본을 쓴다(src/server/trial.ts) */
   trial?: Trial;
   webRoot?: string;
+  /**
+   * 앞에 둔 리버스 프록시(Caddy, nginx 등)가 붙인 X-Forwarded-For를 믿을지. 기본은 TEVRO_TRUST_PROXY=1일 때만.
+   * 프록시 뒤인데 믿지 않으면 모든 요청이 프록시 주소 하나로 보여, 로그인 실패 제한이 모두에게 함께 걸린다.
+   * 프록시 없이 바로 열었는데 믿으면 누구나 머리글을 지어내 제한을 피할 수 있다.
+   */
+  trustProxy?: boolean;
 }
 
 /** API(/api/v1)와 웹 정적 파일을 함께 제공하는 서버. GUI와 CLI는 같은 API만 쓴다(PRD 원칙 7). */
-export function createApp({ store, accounts, trial, webRoot }: AppOptions): Server {
+export function createApp({ store, accounts, trial, webRoot, trustProxy = process.env.TEVRO_TRUST_PROXY === '1' }: AppOptions): Server {
   if ((store === undefined) === (trial === undefined)) throw new Error('store와 trial 중 하나만 넘깁니다.');
   if (store && !accounts) throw new Error('store를 넘길 때는 accounts도 넘깁니다.');
 
@@ -235,6 +243,7 @@ export function createApp({ store, accounts, trial, webRoot }: AppOptions): Serv
         actor,
         setCookie: (value) => cookies.push(value),
         secure: isSecure(req),
+        client: clientAddress(req, trustProxy),
         sandboxId,
         sandbox,
       });
@@ -341,18 +350,30 @@ function sendProblem(res: ServerResponse, error: unknown): void {
     res.end();
     return;
   }
-  res.writeHead(problem.status, { 'content-type': 'application/problem+json; charset=utf-8', 'cache-control': 'no-store' });
+  res.writeHead(problem.status, {
+    'content-type': 'application/problem+json; charset=utf-8',
+    'cache-control': 'no-store',
+    ...(problem.retryAfter ? { 'retry-after': String(problem.retryAfter) } : {}),
+  });
   res.end(JSON.stringify(problem));
 }
 
 /** 사용자·로그인·토큰 API. 토큰 발급과 사용자 관리는 웹 세션으로만 한다(에이전트가 토큰으로 새 토큰을 만들지 못하게). */
 function accountRoutes(accounts: Accounts): Route[] {
   return [
-    route('GET', '/api/v1/auth/config', 'public', () => ({ body: { providers: accounts.providers() } })),
-    route('POST', '/api/v1/auth/login', 'public', async ({ body, setCookie, secure }) => {
-      const { user, cookie, csrfToken } = await accounts.login(body);
+    route('GET', '/api/v1/auth/config', 'public', () => ({
+      body: { providers: accounts.providers(), setupRequired: accounts.setupRequired() } satisfies AuthConfigDto,
+    })),
+    route('POST', '/api/v1/auth/login', 'public', async ({ body, setCookie, secure, client }) => {
+      const { user, cookie, csrfToken } = await accounts.login(body, client);
       setCookie(sessionCookie(cookie, secure, Math.floor(POLICY.sessionMaxMs / 1000)));
       return { body: { user, csrfToken } };
+    }),
+    // 첫 설정: 사용자가 없을 때 서버 로그의 설정 코드로 첫 관리자를 만들고 바로 로그인한다.
+    route('POST', '/api/v1/auth/setup', 'public', async ({ body, setCookie, secure, client }) => {
+      const { user, cookie, csrfToken } = await accounts.completeSetup(body, client);
+      setCookie(sessionCookie(cookie, secure, Math.floor(POLICY.sessionMaxMs / 1000)));
+      return { status: 201, body: { user, csrfToken } };
     }),
     route('POST', '/api/v1/auth/logout', 'session', ({ actor, setCookie, secure }) => {
       accounts.logout(actor!);
@@ -493,4 +514,17 @@ function sessionCookie(value: string, secure: boolean, maxAgeSeconds: number): s
 function isSecure(req: IncomingMessage): boolean {
   if (process.env.TEVRO_COOKIE_SECURE === '1') return true;
   return headerValue(req.headers['x-forwarded-proto'])?.split(',')[0].trim() === 'https' || 'encrypted' in req.socket;
+}
+
+/** 요청한 곳의 주소. 프록시를 믿으면 X-Forwarded-For의 마지막 값(우리 프록시가 덧붙인 값)을 쓴다. 앞쪽 값은 요청자가 지어낼 수 있다. */
+function clientAddress(req: IncomingMessage, trustProxy: boolean): string {
+  if (trustProxy) {
+    const forwarded = headerValue(req.headers['x-forwarded-for'])
+      ?.split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .at(-1);
+    if (forwarded) return forwarded;
+  }
+  return req.socket.remoteAddress ?? 'unknown';
 }

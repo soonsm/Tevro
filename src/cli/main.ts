@@ -639,7 +639,7 @@ function client(command: Command) {
 
 function exitCodeOf(code: string): number {
   if (code.startsWith('VALIDATION_') || STRUCTURE_CODES.has(code)) return EXIT.validation;
-  if (code === 'UNAUTHENTICATED' || code === 'FORBIDDEN' || code === 'ACCOUNT_LOCKED') return EXIT.auth;
+  if (code === 'UNAUTHENTICATED' || code === 'FORBIDDEN' || code === 'RATE_LIMITED') return EXIT.auth;
   return code === 'NOT_FOUND' ? EXIT.notFound : EXIT.failure;
 }
 

@@ -12,7 +12,7 @@ let clock = Date.parse('2026-11-01T00:00:00Z');
 let server: TestServer;
 
 before(async () => {
-  server = await startServer(':memory:', undefined, { now: () => clock });
+  server = await startServer(':memory:', undefined, { now: () => clock, trustProxy: true });
   await server.accounts.createUser({ username: 'editor', role: 'editor', password: 'editor password' });
   await server.accounts.createUser({ username: 'viewer', role: 'viewer', password: 'viewer password' });
 });
@@ -74,18 +74,40 @@ describe('로그인과 세션', () => {
     assert.equal((await server.callWith({}, 'POST', '/auth/login', {})).status, 422);
   });
 
-  it('같은 계정으로 5번 틀리면 15분 동안 맞는 비밀번호로도 못 들어온다', async () => {
+  it('같은 곳에서 같은 아이디로 5번 틀리면 그곳에서만 막히고, 계정 주인은 다른 곳에서 들어온다', async () => {
     await server.accounts.createUser({ username: 'locky', role: 'viewer', password: 'locky password' });
-    for (let i = 1; i < POLICY.lockAfterFailures; i += 1) {
-      assert.equal((await server.callWith({}, 'POST', '/auth/login', { username: 'locky', password: 'wrong password' })).status, 401);
+    const from = (ip: string) => ({ 'x-forwarded-for': ip });
+    for (let i = 0; i < POLICY.failuresPerUser; i += 1) {
+      assert.equal((await server.callWith(from('203.0.113.7'), 'POST', '/auth/login', { username: 'locky', password: 'wrong password' })).status, 401);
     }
-    const fifth = await server.callWith({}, 'POST', '/auth/login', { username: 'locky', password: 'wrong password' });
-    assert.equal(fifth.status, 429);
-    assert.equal(fifth.data.code, 'ACCOUNT_LOCKED');
-    assert.match(fifth.data.detail, /15분 뒤/);
-    assert.equal((await server.callWith({}, 'POST', '/auth/login', { username: 'locky', password: 'locky password' })).status, 429);
-    clock += POLICY.lockMs;
-    assert.equal((await server.callWith({}, 'POST', '/auth/login', { username: 'locky', password: 'locky password' })).status, 200);
+    const blocked = await server.callWith(from('203.0.113.7'), 'POST', '/auth/login', { username: 'LOCKY', password: 'locky password' });
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.data.code, 'RATE_LIMITED');
+    assert.match(blocked.data.detail, /15분 뒤/);
+    assert.equal(blocked.headers.get('retry-after'), String(POLICY.failureWindowMs / 1000));
+    // 같은 곳이라도 다른 아이디는 아직 된다. 다른 곳에서는 주인이 바로 들어온다.
+    assert.equal((await server.callWith(from('203.0.113.7'), 'POST', '/auth/login', { username: 'viewer', password: 'viewer password' })).status, 200);
+    assert.equal((await server.callWith(from('198.51.100.2'), 'POST', '/auth/login', { username: 'locky', password: 'locky password' })).status, 200);
+    clock += POLICY.failureWindowMs;
+    assert.equal((await server.callWith(from('203.0.113.7'), 'POST', '/auth/login', { username: 'locky', password: 'locky password' })).status, 200);
+  });
+
+  it('한 곳에서 아이디를 바꿔 가며 20번 틀리면 그곳의 모든 로그인이 막힌다', async () => {
+    const from = { 'x-forwarded-for': '203.0.113.50' };
+    for (let i = 0; i < POLICY.failuresPerClient; i += 1) {
+      assert.equal((await server.callWith(from, 'POST', '/auth/login', { username: `guess${i}`, password: 'wrong password' })).status, 401);
+    }
+    assert.equal((await server.callWith(from, 'POST', '/auth/login', { username: 'viewer', password: 'viewer password' })).status, 429);
+    assert.equal((await server.callWith({ 'x-forwarded-for': '203.0.113.51' }, 'POST', '/auth/login', { username: 'viewer', password: 'viewer password' })).status, 200);
+  });
+
+  it('X-Forwarded-For의 앞쪽 값은 지어낼 수 있으므로 프록시가 붙인 마지막 값으로 센다', async () => {
+    for (let i = 0; i < POLICY.failuresPerUser; i += 1) {
+      const spoofed = { 'x-forwarded-for': `10.9.9.${i}, 203.0.113.90` };
+      await server.callWith(spoofed, 'POST', '/auth/login', { username: 'viewer', password: 'wrong password' });
+    }
+    const again = await server.callWith({ 'x-forwarded-for': '10.1.1.1, 203.0.113.90' }, 'POST', '/auth/login', { username: 'viewer', password: 'viewer password' });
+    assert.equal(again.status, 429);
   });
 
   it('세션으로 바꾸는 요청은 CSRF 값이 맞아야 하고, 다른 출처(Origin)에서 온 요청은 거부한다', async () => {
@@ -138,7 +160,7 @@ describe('로그인과 세션', () => {
 
   it('로그인 화면에 보일 로그인 방식은 로그인 없이 볼 수 있다', async () => {
     const config = await server.callWith({}, 'GET', '/auth/config');
-    assert.deepEqual(config.data, { providers: [{ id: 'local', label: 'Tevro 계정' }] });
+    assert.deepEqual(config.data, { providers: [{ id: 'local', label: 'Tevro 계정' }], setupRequired: false });
   });
 });
 
