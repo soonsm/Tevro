@@ -336,11 +336,11 @@ PRD §6.8 예시의 명사(`project`, `task`, `dependency`, `graph`)와 동사 �
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `template list` | 볼 수 있는 템플릿(회사 템플릿·내 템플릿) |
+| `template list` | 볼 수 있는 템플릿(공용 템플릿·내 템플릿) |
 | `template show <id>` | 정보와 공정 구조 |
 | `template create --name [--description] [--official]` | 빈 템플릿. `--official`은 관리자 |
-| `template save --from <프로젝트·템플릿 ID> --name` (별칭 `save-from-project`) | 복사해 새 템플릿으로 저장. 회사 템플릿을 내 템플릿으로 복사할 때도 쓴다 |
-| `template update <id> [--name] [--description] [--official \| --personal]` | 이름·설명, 회사 템플릿 지정·해제(관리자) |
+| `template save --from <프로젝트·템플릿 ID> --name` (별칭 `save-from-project`) | 복사해 새 템플릿으로 저장. 공용 템플릿을 내 템플릿으로 복사할 때도 쓴다 |
+| `template update <id> [--name] [--description] [--official \| --personal]` | 이름·설명, 공용 템플릿 지정·해제(관리자) |
 | `template use <id> --name` (별칭 `instantiate`) | 템플릿으로 새 프로젝트 |
 | `template delete <id> --yes` | 삭제. `--yes`가 없으면 영향(공정 수, 이 템플릿으로 만든 프로젝트 수)만 보여 주고 종료 코드 2 |
 

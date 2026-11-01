@@ -137,18 +137,18 @@ describe('템플릿 저장과 적용', () => {
   });
 });
 
-describe('회사 템플릿과 내 템플릿', () => {
-  it('내 템플릿은 나만(관리자는 모두) 보고, 회사 템플릿은 모두 보며 관리자만 만든다', async () => {
+describe('공용 템플릿과 내 템플릿', () => {
+  it('내 템플릿은 나만(관리자는 모두) 보고, 공용 템플릿은 모두 보며 관리자만 만든다', async () => {
     const mine = (await as('editor')('POST', '/templates', { name: '편집자의 개인 템플릿' })).data;
     assert.equal((await as('editor')('POST', '/templates', { name: '몰래 공식', official: true })).status, 403);
-    const company = (await as('admin')('POST', '/templates', { name: '회사 표준', official: true })).data;
-    assert.equal(company.template.official, true);
+    const shared = (await as('admin')('POST', '/templates', { name: '공용 표준', official: true })).data;
+    assert.equal(shared.template.official, true);
 
     const seen = async (who: string) => ((await as(who)('GET', '/templates')).data as TemplateSummaryDto[]).map((item) => item.id);
     assert.ok((await seen('editor')).includes(mine.id));
     assert.ok(!(await seen('other')).includes(mine.id));
     assert.ok((await seen('admin')).includes(mine.id));
-    for (const who of ['editor', 'other', 'viewer']) assert.ok((await seen(who)).includes(company.id));
+    for (const who of ['editor', 'other', 'viewer']) assert.ok((await seen(who)).includes(shared.id));
     // 남의 개인 템플릿은 없는 것처럼
     assert.equal((await as('other')('GET', `/projects/${mine.id}/graph`)).status, 404);
     assert.equal((await as('other')('POST', `/projects/${mine.id}/tasks`, { title: 'x' })).status, 404);
@@ -156,32 +156,32 @@ describe('회사 템플릿과 내 템플릿', () => {
     assert.equal((await as('other')('POST', '/templates/from', { sourceId: mine.id, name: 'x' })).status, 404);
   });
 
-  it('회사 템플릿은 관리자만 고치고 지우며, 다른 사람은 내 템플릿으로 복사해 고쳐 쓴다', async () => {
-    const company = (await as('admin')('POST', '/templates', { name: '복사해 쓸 회사 템플릿', official: true })).data;
-    await as('admin')('POST', `/projects/${company.id}/tasks`, { title: '회사 공정' });
-    const denied = await as('editor')('POST', `/projects/${company.id}/tasks`, { title: 'x' });
+  it('공용 템플릿은 관리자만 고치고 지우며, 다른 사람은 내 템플릿으로 복사해 고쳐 쓴다', async () => {
+    const shared = (await as('admin')('POST', '/templates', { name: '복사해 쓸 공용 템플릿', official: true })).data;
+    await as('admin')('POST', `/projects/${shared.id}/tasks`, { title: '공용 공정' });
+    const denied = await as('editor')('POST', `/projects/${shared.id}/tasks`, { title: 'x' });
     assert.equal(denied.status, 403);
     assert.match(denied.data.detail, /내 템플릿으로 복사/);
-    assert.equal((await as('editor')('DELETE', `/templates/${company.id}`)).status, 403);
-    assert.equal((await as('editor')('PATCH', `/templates/${company.id}`, { name: 'x' })).status, 403);
+    assert.equal((await as('editor')('DELETE', `/templates/${shared.id}`)).status, 403);
+    assert.equal((await as('editor')('PATCH', `/templates/${shared.id}`, { name: 'x' })).status, 403);
     const list: TemplateSummaryDto[] = (await as('editor')('GET', '/templates')).data;
-    assert.equal(list.find((item) => item.id === company.id)!.canEdit, false);
+    assert.equal(list.find((item) => item.id === shared.id)!.canEdit, false);
 
-    const copy = await as('editor')('POST', '/templates/from', { sourceId: company.id, name: '내 수정본' });
+    const copy = await as('editor')('POST', '/templates/from', { sourceId: shared.id, name: '내 수정본' });
     assert.equal(copy.status, 201);
     assert.deepEqual([copy.data.template.official, copy.data.template.ownerId], [false, server.accounts.findUser('editor')!.id]);
     assert.equal((await as('editor')('POST', `/projects/${copy.data.id}/tasks`, { title: '내가 더한 공정' })).status, 201);
-    assert.deepEqual((await graphOf(company.id)).tasks.map((task) => task.title), ['회사 공정']);
-    assert.deepEqual((await graphOf(copy.data.id)).tasks.map((task) => task.title), ['회사 공정', '내가 더한 공정']);
+    assert.deepEqual((await graphOf(shared.id)).tasks.map((task) => task.title), ['공용 공정']);
+    assert.deepEqual((await graphOf(copy.data.id)).tasks.map((task) => task.title), ['공용 공정', '내가 더한 공정']);
   });
 
-  it('관리자는 개인 템플릿을 회사 템플릿으로 지정·해제하고, 편집자는 지정할 수 없다', async () => {
+  it('관리자는 개인 템플릿을 공용 템플릿으로 지정·해제하고, 편집자는 지정할 수 없다', async () => {
     const mine = (await as('editor')('POST', '/templates', { name: '올릴 템플릿' })).data;
     assert.equal((await as('editor')('PATCH', `/templates/${mine.id}`, { official: true })).status, 403);
     const promoted = await as('admin')('PATCH', `/templates/${mine.id}`, { official: true });
     assert.equal(promoted.data.template.official, true);
-    assert.equal(promoted.data.template.version, 1); // 회사 템플릿 지정은 내용을 바꾸지 않는다
-    // 회사 템플릿이 되면 만든 사람도 못 고친다
+    assert.equal(promoted.data.template.version, 1); // 공용 템플릿 지정은 내용을 바꾸지 않는다
+    // 공용 템플릿이 되면 만든 사람도 못 고친다
     assert.equal((await as('editor')('POST', `/projects/${mine.id}/tasks`, { title: 'x' })).status, 403);
     await as('admin')('PATCH', `/templates/${mine.id}`, { official: false });
     assert.equal((await as('editor')('POST', `/projects/${mine.id}/tasks`, { title: '다시 내 것' })).status, 201);
@@ -215,7 +215,7 @@ describe('회사 템플릿과 내 템플릿', () => {
 });
 
 describe('체험 모드의 템플릿', () => {
-  it('예시 데이터의 템플릿은 회사 템플릿으로 보이고, 로그인 없이 프로젝트를 만들 수 있다', async () => {
+  it('예시 데이터의 템플릿은 공용 템플릿으로 보이고, 로그인 없이 프로젝트를 만들 수 있다', async () => {
     const trialServer = await startTrialServer(createTrial(loadTemplates(resolve(import.meta.dirname, '../trial'))));
     try {
       const sandbox = 'templates-test-sandbox-1';

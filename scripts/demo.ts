@@ -39,7 +39,7 @@ const graphs = [
 ];
 for (const { project, kind } of graphs) {
   const description = project.description ? ['--description', project.description] : [];
-  // 예시 템플릿은 회사 템플릿으로 넣는다. 토큰 주인이 관리자가 아니면 내 템플릿으로 넣는다.
+  // 예시 템플릿은 공용 템플릿으로 넣는다. 토큰 주인이 관리자가 아니면 내 템플릿으로 넣는다.
   const projectId =
     kind === 'project'
       ? tevro<{ id: string }>(['project', 'create', '--name', project.name, ...description])!.id

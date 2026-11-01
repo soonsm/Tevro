@@ -14,7 +14,7 @@ export interface Dataset {
   label: string;
   order: number;
   projects: DatasetProject[];
-  /** 회사 템플릿으로 넣는다. 공정에 진행 상태와 Jira 링크를 쓸 수 없다 */
+  /** 공용 템플릿으로 넣는다. 공정에 진행 상태와 Jira 링크를 쓸 수 없다 */
   templates: DatasetProject[];
 }
 
@@ -109,7 +109,7 @@ function buildTemplate(key: string, file: string): Template {
         }
       };
       const input = { name: project.name, description: project.description };
-      // 체험 모드에는 계정이 없어 템플릿은 모두 회사 템플릿(공식)으로 넣는다.
+      // 체험 모드에는 계정이 없어 템플릿은 모두 공용 템플릿(공식)으로 넣는다.
       const projectId = step(kind === 'project' ? '프로젝트' : '템플릿', () =>
         kind === 'project' ? store.createProject(input) : store.createTemplate(input, { ownerId: null, official: true }),
       ).id;

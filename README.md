@@ -1,6 +1,6 @@
 # Tevro
 
-프로젝트의 공정(할 일)과 선후관계, 진행 상태를 한 화면에서 보는 도구입니다. 이 저장소의 코드는 핵심만 담은 첫 버전(MVP)입니다. 전체 요구사항과 결정 기록은 [`Tevro/`](Tevro/) 문서 폴더에 있습니다.
+프로젝트의 공정(할 일)과 선후관계, 진행 상태를 한 화면에서 보는 도구입니다. 직접 설치해 쓰는 오픈소스(Apache-2.0)이며, 외부 네트워크 없이도 동작합니다. 전체 요구사항과 결정 기록은 [`Tevro/`](Tevro/) 문서 폴더에, 앞으로 할 일은 [`Tevro/roadmap.md`](Tevro/roadmap.md)에 있습니다.
 
 ## 이번 버전에 들어간 것
 
@@ -18,14 +18,14 @@
 - Jira 이슈·Confluence 문서 링크(공정당 각 1개, 링크만 저장)
 - 기한·담당자: 공정마다 기한(날짜)과 담당자(Tevro 사용자). 기한이 지난 공정은 '지연'으로 표시하고, 남은 공정을 기한 순으로 보며 '내가 맡은 일'만 거를 수 있음. 상위보다 늦은 하위 기한은 막지 않고 알림
 - 카드 위치 저장: 끌어서 옮긴 자리를 저장해 모두가 같은 위치를 봄. [자동 정렬]은 그 층의 저장 위치를 지우고 다시 배치
-- 템플릿: 회사 템플릿(관리자가 관리, 모두 사용)과 내 템플릿(만든 사람만). 빈 템플릿 만들기, 프로젝트·템플릿을 복사해 템플릿으로 저장, 템플릿으로 새 프로젝트 만들기(진행 상태 초기화, Jira 링크 비움, Confluence 링크 복사), 출처(템플릿 이름·판) 기록. 아래 '템플릿'
+- 템플릿: 공용 템플릿(관리자가 관리, 모두 사용)과 내 템플릿(만든 사람만). 빈 템플릿 만들기, 프로젝트·템플릿을 복사해 템플릿으로 저장, 템플릿으로 새 프로젝트 만들기(진행 상태 초기화, Jira 링크 비움, Confluence 링크 복사), 출처(템플릿 이름·판) 기록. 아래 '템플릿'
 - 로그인과 권한: 사용자 계정(열람자·편집자·관리자), 웹 세션, CLI·AI 에이전트용 개인 액세스 토큰(read·read-write, 만료일). 첫 관리자는 서버 관리 명령으로(아래 '로그인과 권한')
 - CLI: 화면과 같은 서버 API를 쓰고 `--json` 출력 제공
 - 저장: SQLite 파일 하나(`data/tevro.db`)
 
 ## 아직 넣지 않은 것
 
-사내 계정(LDAP·SSO) 로그인, Jira 연동(이슈 생성·스프린트·상태 반영, `Tevro/company-checklist.md`), 상대 기한(템플릿), 변경 묶음·dry-run·동시 수정 충돌 감지, 프로젝트 삭제, 여러 층을 한 화면에 펼쳐 보기, 폐쇄망 설치 패키지. ADR의 결정은 그대로 두고 구현만 미뤘습니다.
+외부 계정(OIDC·LDAP) 로그인, Jira 연동(이슈 생성·스프린트·상태 반영), 영어 화면, 상대 기한(템플릿), 변경 묶음·dry-run·동시 수정 충돌 감지, 프로젝트 삭제, 여러 층을 한 화면에 펼쳐 보기, 오프라인 설치 꾸러미. 순서와 세부는 [`Tevro/roadmap.md`](Tevro/roadmap.md)에 있습니다.
 
 > 서버는 기본적으로 이 컴퓨터(localhost)에서만 접속됩니다. 다른 PC에서 쓰거나 인터넷에 올릴 때는 HTTPS 프록시 뒤에 둡니다(아래 '인터넷에 올리기').
 
@@ -81,7 +81,7 @@ TEVRO_TOKEN=tevro_pat_… npm run demo
 - **첫 관리자와 비상 관리:** 서버 호스트에서 `npm run admin -- user create | list | reset-password | set-role | activate | deactivate`. 비밀번호는 명령행 인자로 받지 않고 터미널에서 묻거나 표준 입력으로 받습니다. 웹에서 먼저 가입한 사람이 관리자가 되는 화면은 없습니다.
 - **웹:** 서버에 저장하는 세션 + HttpOnly·SameSite=Lax 쿠키. 바꾸는 요청은 CSRF 값과 출처(Origin)를 확인합니다. 8시간 안 쓰면, 길어도 7일이면 다시 로그인합니다. 같은 계정으로 5번 틀리면 15분 잠깁니다. 비밀번호는 10자 이상(Argon2id로 저장).
 - **CLI·AI 에이전트:** 웹 계정 메뉴의 **내 토큰**에서 개인 액세스 토큰(`tevro_pat_…`)을 발급합니다. 범위는 read 또는 read-write, 만료는 1~365일(기본 30일)이고, 할 수 있는 일은 토큰 범위와 발급한 사람의 역할 중 좁은 쪽입니다. 서버에는 해시만 남습니다. 토큰으로는 새 토큰 발급과 사용자 관리를 할 수 없습니다.
-- **사내 계정 연동 대비:** 사용자(`users`)와 로그인 수단(`auth_identities`: 공급자 + 공급자 안의 ID)을 나눠 두었습니다. LDAP·SSO는 `src/server/accounts.ts`의 `PasswordProvider`를 더해 붙이고, 사용자 ID와 기록은 그대로입니다.
+- **외부 계정 연동 대비:** 사용자(`users`)와 로그인 수단(`auth_identities`: 공급자 + 공급자 안의 ID)을 나눠 두었습니다. OIDC·LDAP은 `src/server/accounts.ts`의 `PasswordProvider`를 더해 붙이고, 사용자 ID와 기록은 그대로입니다.
 
 ## 템플릿
 
@@ -89,15 +89,15 @@ TEVRO_TOKEN=tevro_pat_… npm run demo
 
 | 구분 | 누가 보나 | 누가 고치고 지우나 |
 | --- | --- | --- |
-| 회사 템플릿 | 모두 | 관리자. 관리자가 개인 템플릿을 '회사 템플릿으로 지정'하거나 처음부터 회사 템플릿으로 만든다 |
+| 공용 템플릿 | 모두 | 관리자. 관리자가 개인 템플릿을 '공용 템플릿으로 지정'하거나 처음부터 공용 템플릿으로 만든다 |
 | 내 템플릿 | 만든 사람(관리자는 모두) | 만든 사람(과 관리자). 열람자도 웹에서 자기 템플릿을 만들 수 있다 |
 
-- **만들기:** 빈 템플릿, 지금 프로젝트를 템플릿으로 저장, 다른 템플릿(회사 템플릿 포함)을 **내 템플릿으로 복사**해 고쳐 쓰기.
+- **만들기:** 빈 템플릿, 지금 프로젝트를 템플릿으로 저장, 다른 템플릿(공용 템플릿 포함)을 **내 템플릿으로 복사**해 고쳐 쓰기.
 - **편집:** 프로젝트와 같은 그래프 화면에서 합니다(연결·하위 공정·순환 검사 같음). 템플릿에는 진행 상태와 Jira 링크가 없습니다.
 - **새 프로젝트:** [새 프로젝트] → '템플릿에서 시작' → 구조를 미리 보고 이름만 정합니다. 편집자 이상. 공정·연결·하위 구조가 새 ID로 복사되고, 진행 상태는 모두 미착수, Confluence 링크는 복사, Jira 링크는 비웁니다.
 - **서로 독립:** 템플릿을 고쳐도 이미 만든 프로젝트는 바뀌지 않고, 그 반대도 같습니다.
 - **판과 출처:** 프로젝트에는 '템플릿 ○○ N판으로 만듦'이 남습니다. 판은 템플릿을 고친 뒤 다시 프로젝트를 만들 때 하나 오릅니다(같은 판이면 같은 정의). 템플릿을 지워도 프로젝트와 출처 기록은 남습니다.
-- **체험 모드:** 예시 데이터마다 회사 템플릿이 하나씩 있습니다(`trial/*.json`의 `templates`).
+- **체험 모드:** 예시 데이터마다 공용 템플릿이 하나씩 있습니다(`trial/*.json`의 `templates`).
 
 ## CLI
 
@@ -125,12 +125,12 @@ node src/cli/main.ts task move <공정 ID> --top --detach                       
 node src/cli/main.ts task move <공정 ID> --top --detach --yes                   # 연결을 지우고 옮김
 
 # 템플릿 (템플릿 안의 공정·연결은 위 task·dependency 명령에 템플릿 ID를 --project로 넣어 고침)
-node src/cli/main.ts template list                                             # 회사 템플릿·내 템플릿
+node src/cli/main.ts template list                                             # 공용 템플릿·내 템플릿
 node src/cli/main.ts template show <템플릿 ID>
-node src/cli/main.ts template create --name "표준 서비스 준비"                  # 관리자는 --official로 회사 템플릿
+node src/cli/main.ts template create --name "표준 서비스 준비"                  # 관리자는 --official로 공용 템플릿
 node src/cli/main.ts template save --from <프로젝트 또는 템플릿 ID> --name "내 수정본"
 node src/cli/main.ts template use <템플릿 ID> --name "결제 모듈 개편"            # 템플릿으로 새 프로젝트
-node src/cli/main.ts template update <템플릿 ID> --official                     # 회사 템플릿으로 지정(관리자)
+node src/cli/main.ts template update <템플릿 ID> --official                     # 공용 템플릿으로 지정(관리자)
 node src/cli/main.ts template delete <템플릿 ID> --yes
 ```
 
@@ -188,3 +188,8 @@ npm run typecheck  # TypeScript 검사
 | `test` | `node:test` 테스트(도메인 규칙, API, CLI, 스키마 마이그레이션, 선 배치, 체험 모드, 로그인·권한, 템플릿) |
 | `Tevro/` | 요구사항·결정 기록 문서(Obsidian) |
 | `Tevro/db-schema.md` | 테이블 설계서(ERD, 컬럼 설명, 제약) |
+| `Tevro/roadmap.md` | 앞으로 할 일 |
+
+## 라이선스
+
+[Apache License 2.0](LICENSE). 저작권 표시는 [`NOTICE`](NOTICE)에 있습니다.

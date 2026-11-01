@@ -149,7 +149,7 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 ## 알아 둘 것
 
 - **유휴 서버 회수:** Oracle은 Always Free 서버가 7일 동안 CPU·네트워크(Ampere는 메모리도) 사용률 20% 미만이면 회수할 수 있다고 [공식 문서](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)에 적고 있습니다. Tevro는 평소 거의 쉬므로 해당될 수 있습니다. 백업을 두고, 서버가 멈추면 콘솔에서 다시 시작하세요. 종량제(Pay As You Go) 계정은 회수 대상에서 빠진다는 이야기가 있지만 공식 문서로 확인하지 못했습니다.
-- **데이터 위치:** 데이터가 Oracle Cloud에 저장됩니다. 실제 업무 데이터를 넣어도 되는지는 사내 기준을 확인하세요. 최종 설치는 폐쇄망이 기준입니다(PRD N-02).
+- **데이터 위치:** 데이터가 Oracle Cloud에 저장됩니다. 실제 업무 데이터를 넣어도 되는지는 소속 조직의 기준을 확인하세요. Tevro는 외부 네트워크 없이도 동작하므로 내부망에 직접 설치할 수도 있습니다(PRD N-02).
 - **시험 범위:** 이 스크립트는 Ubuntu 24.04(x86_64) 컨테이너에서 설치, 갱신(Node.js 22→24 포함), 체험 모드 켜기·끄기, 첫 관리자 만들기(터미널·비터미널), 계정 로그인, HTTPS 프록시, 방화벽 단계를 확인했습니다. Ampere(arm64) 서버와 실제 Let's Encrypt 발급은 시험하지 못했습니다.
 
 ## 문제 해결

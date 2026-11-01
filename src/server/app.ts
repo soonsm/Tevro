@@ -20,7 +20,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-// 외부 출처의 스크립트·스타일·글꼴 요청을 막아, 폐쇄망 요구(N-02) 위반이 브라우저 오류로 드러나게 한다(ADR-0002).
+// 외부 출처의 스크립트·스타일·글꼴 요청을 막아, 오프라인 설치 요구(N-02: 외부 네트워크 없이 동작) 위반이 브라우저 오류로 드러나게 한다(ADR-0002).
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self'",
@@ -144,7 +144,7 @@ export function createApp({ store, accounts, trial, webRoot }: AppOptions): Serv
     // 담당자로 고를 수 있는 사람. 이름과 아이디만 준다(역할·로그인 기록은 관리자 화면에서만).
     route('GET', '/api/v1/people', 'read', ({ store }) => ({ body: store.listPeople() })),
 
-    // 템플릿(F-T01~F-T10). 회사 템플릿(official)은 모두가 보고 관리자만 바꾸며, 개인 템플릿은 만든 사람만 보고 바꾼다(관리자는 모두).
+    // 템플릿(F-T01~F-T10). 공용 템플릿(official)은 모두가 보고 관리자만 바꾸며, 개인 템플릿은 만든 사람만 보고 바꾼다(관리자는 모두).
     route('GET', '/api/v1/templates', 'read', ({ store, actor }) => ({
       body: store
         .listTemplates()
@@ -155,7 +155,7 @@ export function createApp({ store, accounts, trial, webRoot }: AppOptions): Serv
       status: 201,
       body: store.createTemplate(body, templateOwner(actor, body.official)),
     })),
-    // 프로젝트나 볼 수 있는 템플릿(회사 템플릿 포함)을 복사해 새 템플릿으로 저장한다.
+    // 프로젝트나 볼 수 있는 템플릿(공용 템플릿 포함)을 복사해 새 템플릿으로 저장한다.
     route('POST', '/api/v1/templates/from', 'own', (r) => {
       const sourceId = typeof r.body.sourceId === 'string' ? r.body.sourceId : '';
       if (!sourceId) throw invalidInput('복사할 프로젝트·템플릿(sourceId)을 지정하세요.');
@@ -166,7 +166,7 @@ export function createApp({ store, accounts, trial, webRoot }: AppOptions): Serv
       const current = requireTemplateIn(r.store, r.params.templateId);
       edit(r, r.params.templateId);
       if (r.body.official !== undefined && r.body.official !== current.template!.official && r.actor && r.actor.user.role !== 'admin') {
-        throw new ApiError(403, 'FORBIDDEN', '회사 템플릿 지정·해제는 관리자만 할 수 있습니다.');
+        throw new ApiError(403, 'FORBIDDEN', '공용 템플릿 지정·해제는 관리자만 할 수 있습니다.');
       }
       return { body: r.store.updateTemplate(r.params.templateId, r.body) };
     }),
@@ -431,7 +431,7 @@ function canEditTemplate(actor: Actor | undefined, template: TemplateAccess): bo
 
 /**
  * 그래프(프로젝트·템플릿)별 권한. 프로젝트는 누구나 보고 편집자 이상이 바꾼다.
- * 템플릿은 보이지 않으면 없는 것처럼(NOT_FOUND) 다루고, 회사 템플릿은 관리자만, 개인 템플릿은 주인(과 관리자)만 바꾼다.
+ * 템플릿은 보이지 않으면 없는 것처럼(NOT_FOUND) 다루고, 공용 템플릿은 관리자만, 개인 템플릿은 주인(과 관리자)만 바꾼다.
  */
 function guardGraph(store: Store, actor: Actor | undefined, projectId: string, mode: 'read' | 'write'): ProjectDto {
   const project = store.getProject(projectId);
@@ -448,7 +448,7 @@ function guardGraph(store: Store, actor: Actor | undefined, projectId: string, m
       403,
       'FORBIDDEN',
       project.template!.official
-        ? '회사 템플릿은 관리자만 고칠 수 있습니다. 고쳐 쓰려면 내 템플릿으로 복사하세요.'
+        ? '공용 템플릿은 관리자만 고칠 수 있습니다. 고쳐 쓰려면 내 템플릿으로 복사하세요.'
         : '다른 사람의 템플릿은 고칠 수 없습니다.',
     );
   }
@@ -461,11 +461,11 @@ function requireTemplateIn(store: Store, templateId: string): ProjectDto {
   return project;
 }
 
-/** 새 템플릿의 주인. 회사 템플릿으로 만드는 것은 관리자만. 체험 모드는 주인 없이 회사 템플릿처럼 모두에게 보인다. */
+/** 새 템플릿의 주인. 공용 템플릿으로 만드는 것은 관리자만. 체험 모드는 주인 없이 공용 템플릿처럼 모두에게 보인다. */
 function templateOwner(actor: Actor | undefined, official: unknown): { ownerId: string | null; official: boolean } {
-  if (official !== undefined && typeof official !== 'boolean') throw invalidInput('회사 템플릿(official): true 또는 false여야 합니다.');
+  if (official !== undefined && typeof official !== 'boolean') throw invalidInput('공용 템플릿(official): true 또는 false여야 합니다.');
   if (!actor) return { ownerId: null, official: official ?? true };
-  if (official && actor.user.role !== 'admin') throw new ApiError(403, 'FORBIDDEN', '회사 템플릿은 관리자만 만들 수 있습니다.');
+  if (official && actor.user.role !== 'admin') throw new ApiError(403, 'FORBIDDEN', '공용 템플릿은 관리자만 만들 수 있습니다.');
   return { ownerId: actor.user.id, official: official === true };
 }
 

@@ -16,7 +16,7 @@ export interface ProjectDto {
 }
 
 export interface TemplateInfo {
-  /** 회사 템플릿(공식). 모두가 보고 쓰며 관리자만 고친다. false면 owner의 개인 템플릿 */
+  /** 공용 템플릿(공식). 모두가 보고 쓰며 관리자만 고친다. false면 owner의 개인 템플릿 */
   official: boolean;
   /** 만든 사람(개인 템플릿의 주인). 체험 모드나 주인이 없으면 null */
   ownerId: string | null;
@@ -40,7 +40,7 @@ export interface TemplateSummaryDto extends ProjectDto {
   dependencyCount: number;
   /** 이 템플릿으로 만든 프로젝트 수 */
   usedBy: number;
-  /** 지금 사람이 고칠 수 있는지(회사 템플릿은 관리자, 내 템플릿은 주인) */
+  /** 지금 사람이 고칠 수 있는지(공용 템플릿은 관리자, 내 템플릿은 주인) */
   canEdit: boolean;
 }
 

@@ -1,4 +1,4 @@
-// 템플릿 화면: 새 프로젝트 창(빈 프로젝트 / 템플릿에서 시작), 템플릿 관리(회사 템플릿·내 템플릿), 템플릿 편집 띠.
+// 템플릿 화면: 새 프로젝트 창(빈 프로젝트 / 템플릿에서 시작), 템플릿 관리(공용 템플릿·내 템플릿), 템플릿 편집 띠.
 import { useEffect, useState, type FormEvent } from 'react';
 import type { GraphDto, ProjectDto, TemplateSummaryDto, UserDto } from '../shared/types.ts';
 import { ApiFailure, api } from './api.ts';
@@ -14,17 +14,17 @@ function meta(item: TemplateSummaryDto): string {
   return `공정 ${item.taskCount} · 연결 ${item.dependencyCount} · ${item.template.version}판 · ${item.updatedAt.slice(5, 10).replace('-', '/')} 수정`;
 }
 
-/** 템플릿 목록을 회사 템플릿, 내 템플릿, (관리자에게만 보이는) 다른 사람의 템플릿으로 나눈다. */
+/** 템플릿 목록을 공용 템플릿, 내 템플릿, (관리자에게만 보이는) 다른 사람의 템플릿으로 나눈다. */
 export function groupTemplates(templates: TemplateSummaryDto[], user: UserDto | null) {
   return {
-    company: templates.filter((item) => item.template.official),
+    shared: templates.filter((item) => item.template.official),
     mine: templates.filter((item) => !item.template.official && (!user || item.template.ownerId === user.id)),
     others: templates.filter((item) => !item.template.official && user && item.template.ownerId !== user.id),
   };
 }
 
 export function TemplateChip({ official }: { official: boolean }) {
-  return <span className={`template-chip${official ? ' is-official' : ''}`}>{official ? '회사 템플릿' : '내 템플릿'}</span>;
+  return <span className={`template-chip${official ? ' is-official' : ''}`}>{official ? '공용 템플릿' : '내 템플릿'}</span>;
 }
 
 interface NewProjectProps {
@@ -39,8 +39,8 @@ interface NewProjectProps {
 
 /** 새 프로젝트 창(A안): 빈 프로젝트 또는 템플릿에서 시작. 템플릿을 고르면 구조를 미리 본다. */
 export function NewProjectDialog({ templates, user, initialTemplateId, onCancel, onCreateBlank, onCreateFromTemplate }: NewProjectProps) {
-  const { company, mine } = groupTemplates(templates, user);
-  const usable = [...company, ...mine];
+  const { shared, mine } = groupTemplates(templates, user);
+  const usable = [...shared, ...mine];
   const [mode, setMode] = useState<'blank' | 'template'>(initialTemplateId || usable.length > 0 ? 'template' : 'blank');
   const [selected, setSelected] = useState<string | null>(initialTemplateId ?? usable[0]?.id ?? null);
   const [name, setName] = useState('');
@@ -75,7 +75,7 @@ export function NewProjectDialog({ templates, user, initialTemplateId, onCancel,
             <div className="template-pick">
               <div className="template-pick__list" role="listbox" aria-label="템플릿">
                 {[
-                  { title: '회사 템플릿', items: company },
+                  { title: '공용 템플릿', items: shared },
                   { title: '내 템플릿', items: mine },
                 ]
                   .filter((group) => group.items.length > 0)
@@ -190,7 +190,7 @@ interface SaveTemplateProps {
   submitLabel: string;
   initialName: string;
   initialDescription?: string;
-  /** 관리자에게만 '회사 템플릿으로' 칸을 보인다 */
+  /** 관리자에게만 '공용 템플릿으로' 칸을 보인다 */
   canMakeOfficial: boolean;
   initialOfficial?: boolean;
   note?: string;
@@ -237,7 +237,7 @@ export function SaveTemplateDialog({ heading, submitLabel, initialName, initialD
         {canMakeOfficial && (
           <label className="check-row">
             <input type="checkbox" checked={official} onChange={(event) => setOfficial(event.target.checked)} />
-            회사 템플릿으로 (모든 사람이 보고 쓰며, 관리자만 고침)
+            공용 템플릿으로 (모든 사람이 보고 쓰며, 관리자만 고침)
           </label>
         )}
         <div className="modal__actions">
@@ -266,15 +266,15 @@ interface ManagerProps {
   onDelete: (template: TemplateSummaryDto) => void;
 }
 
-/** 템플릿 관리: 회사 템플릿과 내 템플릿을 탭으로 나눠 보고, 열기·복사·삭제한다. */
+/** 템플릿 관리: 공용 템플릿과 내 템플릿을 탭으로 나눠 보고, 열기·복사·삭제한다. */
 export function TemplatesDialog({ templates, user, currentProject, onClose, onOpen, onNew, onSaveProject, onCopy, onDelete }: ManagerProps) {
-  const { company, mine, others } = groupTemplates(templates, user);
+  const { shared, mine, others } = groupTemplates(templates, user);
   const tabs = [
-    { key: 'company', title: '회사 템플릿', hint: '모든 사람이 보고 씁니다. 관리자만 고칩니다.', items: company, empty: '회사 템플릿이 없습니다.' },
-    { key: 'mine', title: '내 템플릿', hint: '나만 보고 고칩니다.', items: mine, empty: '내 템플릿이 없습니다. 새로 만들거나 회사 템플릿을 복사해 고쳐 쓰세요.' },
+    { key: 'shared', title: '공용 템플릿', hint: '모든 사람이 보고 씁니다. 관리자만 고칩니다.', items: shared, empty: '공용 템플릿이 없습니다.' },
+    { key: 'mine', title: '내 템플릿', hint: '나만 보고 고칩니다.', items: mine, empty: '내 템플릿이 없습니다. 새로 만들거나 공용 템플릿을 복사해 고쳐 쓰세요.' },
     ...(others.length > 0 ? [{ key: 'others', title: '다른 사람의 템플릿', hint: '관리자에게만 보입니다.', items: others, empty: '' }] : []),
   ];
-  const [active, setActive] = useState(company.length === 0 && mine.length > 0 ? 'mine' : 'company');
+  const [active, setActive] = useState(shared.length === 0 && mine.length > 0 ? 'mine' : 'shared');
   const tab = tabs.find((item) => item.key === active) ?? tabs[0];
   return (
     <Modal labelledBy="templates-title" onClose={onClose} wide>
@@ -353,7 +353,7 @@ export function DeleteTemplateDialog({ template, onCancel, onConfirm }: { templa
         ‘{template.name}’ 템플릿을 삭제할까요?
       </h2>
       <p className="panel-note">
-        {template.template.official ? '회사 템플릿' : '내 템플릿'}이며 공정 {template.taskCount}개가 들어 있습니다. 이 템플릿으로 만든 프로젝트{' '}
+        {template.template.official ? '공용 템플릿' : '내 템플릿'}이며 공정 {template.taskCount}개가 들어 있습니다. 이 템플릿으로 만든 프로젝트{' '}
         {template.usedBy}개는 그대로 남고, 어느 템플릿으로 만들었는지도 계속 보입니다.
       </p>
       <div className="modal__actions">
@@ -386,7 +386,7 @@ export function TemplateBar({ template, user, onNewProject, onCopy, onEditInfo, 
     <div className="template-bar">
       <TemplateChip official={official} />
       <span className="template-bar__text">
-        {template.canEdit ? <b>템플릿 편집 중 · {version}판</b> : <b>{official ? '회사 템플릿' : '템플릿'} · {version}판 · 보기 전용</b>}
+        {template.canEdit ? <b>템플릿 편집 중 · {version}판</b> : <b>{official ? '공용 템플릿' : '템플릿'} · {version}판 · 보기 전용</b>}
         {template.canEdit
           ? ` — 고쳐도 이 템플릿으로 이미 만든 프로젝트${template.usedBy > 0 ? ` ${template.usedBy}개` : ''}는 바뀌지 않습니다.`
           : ' — 관리자만 고칠 수 있습니다. 고쳐 쓰려면 내 템플릿으로 복사하세요.'}
@@ -407,7 +407,7 @@ export function TemplateBar({ template, user, onNewProject, onCopy, onEditInfo, 
         )}
         {user?.role === 'admin' && (
           <button type="button" className="button small" onClick={onToggleOfficial}>
-            {official ? '회사 템플릿 해제' : '회사 템플릿으로 지정'}
+            {official ? '공용 템플릿 해제' : '공용 템플릿으로 지정'}
           </button>
         )}
         {template.canEdit && (

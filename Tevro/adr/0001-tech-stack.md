@@ -192,7 +192,7 @@ React Flow의 'Expand and Collapse' 예제는 Pro 전용이다(xyflow Pro Licens
 다시 검토할 시점:
 
 - 숙련도 확인 결과 팀의 TypeScript 서버 경험이나 React 경험이 부족할 때.
-- 사내 Jira가 10.0 이상으로 업그레이드될 때. `jira.js` 6.3 이상 정식판을 SDK 후보로 재평가한다(OSS §6.1). 사내 Jira 9.15는 2026-03-27에 지원이 끝났고, Jira Data Center 제품군은 2029-03-28 EOL 이후 읽기 전용이 된다. [Atlassian 지원 종료 정책][atlassian-eos], [Data Center EOL][jira-dc-eol] 업그레이드 가능성은 PRD §6.7 '대상 Jira 환경'과 §13-6에 정리되어 있다.
+- 대상 Jira가 10.0 이상으로 업그레이드될 때. `jira.js` 6.3 이상 정식판을 SDK 후보로 재평가한다(OSS §6.1). Jira 9.15는 2026-03-27에 지원이 끝났고, Jira Data Center 제품군은 2029-03-28 EOL 이후 읽기 전용이 된다. [Atlassian 지원 종료 정책][atlassian-eos], [Data Center EOL][jira-dc-eol] 업그레이드 가능성은 PRD §6.7 '대상 Jira 환경'과 §13-6에 정리되어 있다.
 - 채택한 Node.js 26 LTS의 지원 종료(2029-04-30) 전.
 
 ## 남은 확인 사항

@@ -396,14 +396,14 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
   }
 
   const levelTask = levelId ? graph?.tasks.find((task) => task.id === levelId) : undefined;
-  // 템플릿을 보고 있으면 그 템플릿 정보. 고칠 수 없는 템플릿(다른 사람 것, 관리자가 아닐 때 회사 템플릿)은 보기 전용이다.
+  // 템플릿을 보고 있으면 그 템플릿 정보. 고칠 수 없는 템플릿(다른 사람 것, 관리자가 아닐 때 공용 템플릿)은 보기 전용이다.
   const currentTemplate = graph?.project.kind === 'template' ? templates.find((item) => item.id === graph.project.id) : undefined;
   const graphReadOnly = graph?.project.kind === 'template' ? !currentTemplate?.canEdit : readOnly;
   const readOnlyReason =
     graph?.project.kind !== 'template'
       ? '열람자 계정이라 보기만 할 수 있습니다.'
       : currentTemplate?.template.official
-        ? '회사 템플릿은 관리자만 고칩니다. 고쳐 쓰려면 위 띠의 [내 템플릿으로 복사]를 누르세요.'
+        ? '공용 템플릿은 관리자만 고칩니다. 고쳐 쓰려면 위 띠의 [내 템플릿으로 복사]를 누르세요.'
         : '다른 사람의 템플릿이라 보기만 할 수 있습니다.';
   const grouped = groupTemplates(templates, user);
 
@@ -448,7 +448,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
                 ))}
               </optgroup>
               {[
-                { label: '회사 템플릿', items: grouped.company },
+                { label: '공용 템플릿', items: grouped.shared },
                 { label: '내 템플릿', items: grouped.mine },
                 { label: '다른 사람의 템플릿', items: grouped.others },
               ]
@@ -545,9 +545,9 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
             onEditInfo={() => setDialog({ kind: 'template-info', template: currentTemplate })}
             onToggleOfficial={() =>
               void templateAction(
-                '회사 템플릿 지정을 바꾸지 못했습니다',
+                '공용 템플릿 지정을 바꾸지 못했습니다',
                 () => api.updateTemplate(currentTemplate.id, { official: !currentTemplate.template.official }),
-                currentTemplate.template.official ? '회사 템플릿에서 해제했습니다' : '회사 템플릿으로 지정했습니다',
+                currentTemplate.template.official ? '공용 템플릿에서 해제했습니다' : '공용 템플릿으로 지정했습니다',
               )
             }
             onDelete={() => setDialog({ kind: 'delete-template', template: currentTemplate })}

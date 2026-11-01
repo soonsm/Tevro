@@ -402,11 +402,11 @@ program
 
 const template = program
   .command('template')
-  .description('템플릿(회사 템플릿·내 템플릿). 템플릿 안의 공정·연결은 task·dependency 명령에 템플릿 ID를 --project로 넣어 고침');
+  .description('템플릿(공용 템플릿·내 템플릿). 템플릿 안의 공정·연결은 task·dependency 명령에 템플릿 ID를 --project로 넣어 고침');
 
 template
   .command('list')
-  .description('볼 수 있는 템플릿 목록 (회사 템플릿, 내 템플릿)')
+  .description('볼 수 있는 템플릿 목록 (공용 템플릿, 내 템플릿)')
   .action(async (_options, command: Command) => {
     const templates = await client(command).get<TemplateSummaryDto[]>('/api/v1/templates');
     emit(command, templates, () =>
@@ -438,7 +438,7 @@ template
     }
     emit(command, graph, () => {
       const info = graph.project.template!;
-      const owner = info.official ? '회사 템플릿' : `내 템플릿${info.ownerName ? ` (${info.ownerName})` : ''}`;
+      const owner = info.official ? '공용 템플릿' : `내 템플릿${info.ownerName ? ` (${info.ownerName})` : ''}`;
       return [
         `${graph.project.name} (${graph.project.id})`,
         `  ${owner} · ${info.version}판 · 공정 ${graph.tasks.length} · 연결 ${graph.dependencies.length}`,
@@ -451,10 +451,10 @@ template
 
 template
   .command('create')
-  .description('빈 템플릿 만들기 (내 템플릿. 관리자는 --official로 회사 템플릿)')
+  .description('빈 템플릿 만들기 (내 템플릿. 관리자는 --official로 공용 템플릿)')
   .requiredOption('--name <name>', '템플릿 이름')
   .option('--description <text>', '설명')
-  .option('--official', '회사 템플릿으로 (관리자만)')
+  .option('--official', '공용 템플릿으로 (관리자만)')
   .action(async (options: { name: string; description?: string; official?: boolean }, command: Command) => {
     const created = await client(command).post<ProjectDto>('/api/v1/templates', options);
     emit(command, created, () => `템플릿을 만들었습니다: ${created.name} (${created.id})\n공정 추가: tevro task add --project ${created.id} --title <제목>`);
@@ -463,11 +463,11 @@ template
 template
   .command('save')
   .alias('save-from-project')
-  .description('프로젝트나 템플릿(회사 템플릿 포함)을 복사해 새 템플릿으로 저장. 진행 상태와 Jira 링크는 빼고 가져옴')
+  .description('프로젝트나 템플릿(공용 템플릿 포함)을 복사해 새 템플릿으로 저장. 진행 상태와 Jira 링크는 빼고 가져옴')
   .requiredOption('--from <id>', '복사할 프로젝트 ID 또는 템플릿 ID')
   .requiredOption('--name <name>', '새 템플릿 이름')
   .option('--description <text>', '설명')
-  .option('--official', '회사 템플릿으로 (관리자만)')
+  .option('--official', '공용 템플릿으로 (관리자만)')
   .action(async (options: { from: string; name: string; description?: string; official?: boolean }, command: Command) => {
     const created = await client(command).post<ProjectDto>('/api/v1/templates/from', {
       sourceId: options.from,
@@ -480,12 +480,12 @@ template
 
 template
   .command('update')
-  .description('템플릿 이름·설명 바꾸기, 회사 템플릿 지정·해제(관리자)')
+  .description('템플릿 이름·설명 바꾸기, 공용 템플릿 지정·해제(관리자)')
   .argument('<template-id>', '템플릿 ID')
   .option('--name <name>', '새 이름')
   .option('--description <text>', '새 설명')
-  .addOption(new Option('--official', '회사 템플릿으로 지정 (관리자만)').conflicts('personal'))
-  .option('--personal', '회사 템플릿 지정 해제 (관리자만. 만든 사람의 템플릿으로 돌아감)')
+  .addOption(new Option('--official', '공용 템플릿으로 지정 (관리자만)').conflicts('personal'))
+  .option('--personal', '공용 템플릿 지정 해제 (관리자만. 만든 사람의 템플릿으로 돌아감)')
   .action(
     async (templateId: string, options: { name?: string; description?: string; official?: boolean; personal?: boolean }, command: Command) => {
       const body: Record<string, unknown> = {};
@@ -494,7 +494,7 @@ template
       if (options.official) body.official = true;
       if (options.personal) body.official = false;
       const updated = await client(command).patch<ProjectDto>(`/api/v1/templates/${segment(templateId)}`, body);
-      emit(command, updated, () => `템플릿을 바꿨습니다: ${updated.name} (${updated.template!.official ? '회사 템플릿' : '내 템플릿'}, ${updated.template!.version}판)`);
+      emit(command, updated, () => `템플릿을 바꿨습니다: ${updated.name} (${updated.template!.official ? '공용 템플릿' : '내 템플릿'}, ${updated.template!.version}판)`);
     },
   );
 
@@ -512,7 +512,7 @@ template
 
 template
   .command('delete')
-  .description('템플릿 삭제. 이 템플릿으로 만든 프로젝트는 그대로 남음 (내 템플릿은 본인, 회사 템플릿은 관리자)')
+  .description('템플릿 삭제. 이 템플릿으로 만든 프로젝트는 그대로 남음 (내 템플릿은 본인, 공용 템플릿은 관리자)')
   .argument('<template-id>', '템플릿 ID')
   .option('--yes', '확인 없이 삭제')
   .action(async (templateId: string, options: { yes?: boolean }, command: Command) => {
@@ -682,7 +682,7 @@ async function readStdin(): Promise<string> {
 }
 
 function templateKind(item: { template?: { official: boolean } }): string {
-  return item.template?.official ? '회사' : '내 것';
+  return item.template?.official ? '공용' : '내 것';
 }
 
 function segment(id: string): string {

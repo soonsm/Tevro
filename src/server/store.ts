@@ -599,14 +599,14 @@ export function createStore(db: Db) {
       }));
     },
 
-    /** 빈 템플릿. ownerId가 있으면 그 사람의 개인 템플릿, official이면 회사 템플릿 */
+    /** 빈 템플릿. ownerId가 있으면 그 사람의 개인 템플릿, official이면 공용 템플릿 */
     createTemplate: write((input: Input, owner: { ownerId: string | null; official: boolean }): ProjectDto => {
       const row = { ...newGraphRow('template', input, new Date().toISOString()), owner_user_id: owner.ownerId, official: owner.official ? 1 : 0 };
       sql.insertProject.run(row);
       return dto(row);
     }),
 
-    /** 프로젝트나 다른 템플릿의 공정·연결을 복사해 새 템플릿으로 저장한다(F-T02, 회사 템플릿을 내 템플릿으로 복사). */
+    /** 프로젝트나 다른 템플릿의 공정·연결을 복사해 새 템플릿으로 저장한다(F-T02, 공용 템플릿을 내 템플릿으로 복사). */
     saveAsTemplate: write((sourceId: string, input: Input, owner: { ownerId: string | null; official: boolean }): ProjectDto => {
       requireProject(sourceId);
       const now = new Date().toISOString();
@@ -639,14 +639,14 @@ export function createStore(db: Db) {
       return dto(row);
     }),
 
-    /** 템플릿 이름·설명·회사 템플릿 여부를 바꾼다. */
+    /** 템플릿 이름·설명·공용 템플릿 여부를 바꾼다. */
     updateTemplate: write((templateId: string, input: Input): ProjectDto => {
       const row = requireTemplate(templateId);
       const name = input.name === undefined ? row.name : readText(input.name, '템플릿 이름', MAX_LENGTH.name, { required: true, trim: true });
       const description = readText(input.description, '설명', MAX_LENGTH.description) ?? row.description;
-      if (input.official !== undefined && typeof input.official !== 'boolean') throw invalidInput('회사 템플릿(official): true 또는 false여야 합니다.');
+      if (input.official !== undefined && typeof input.official !== 'boolean') throw invalidInput('공용 템플릿(official): true 또는 false여야 합니다.');
       const official = input.official === undefined ? row.official : input.official ? 1 : 0;
-      // 이름·설명이 바뀌면 정의가 바뀐 것으로 본다. 회사 템플릿 지정·해제는 정의를 바꾸지 않는다.
+      // 이름·설명이 바뀌면 정의가 바뀐 것으로 본다. 공용 템플릿 지정·해제는 정의를 바꾸지 않는다.
       const changed = name !== row.name || description !== row.description ? 1 : row.template_dirty;
       sql.updateTemplateMeta.run(name, description, official, changed, new Date().toISOString(), templateId);
       return dto(requireTemplate(templateId));

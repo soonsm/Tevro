@@ -131,7 +131,7 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 | `updated_at` | TEXT | N | | | 고친 시각. 프로젝트는 수정 기능이 없어 만든 시각과 같다. 템플릿은 공정·연결·이름을 고칠 때 갱신 |
 | `kind` | TEXT | N | `'project'` | CHECK | `project`(프로젝트) 또는 `template`(템플릿). 템플릿도 공정·연결 테이블을 그대로 써서 편집·검증이 같다(F-T03). 템플릿 ID 접두사는 `tpl_` |
 | `owner_user_id` | TEXT | Y | NULL | FK | 템플릿을 만든 사람. `users.id`, ON DELETE SET NULL. 개인 템플릿은 이 사람(과 관리자)만 보고 고친다 |
-| `official` | INTEGER | N | 0 | CHECK | 1이면 회사 템플릿. 모두가 보고 관리자만 고친다 |
+| `official` | INTEGER | N | 0 | CHECK | 1이면 공용 템플릿. 모두가 보고 관리자만 고친다 |
 | `template_version` | INTEGER | N | 1 | | 템플릿의 판. 고친 뒤 처음으로 프로젝트를 만들 때 하나 오른다(같은 판 = 같은 정의) |
 | `template_dirty` | INTEGER | N | 0 | CHECK | 지금 판 뒤로 공정·연결·이름·설명을 고쳤는지 |
 | `source_template_id` | TEXT | Y | NULL | | 이 프로젝트를 만든 템플릿. 템플릿을 지워도 남게 외래 키를 두지 않는다(F-T09, AC-22) |
@@ -201,7 +201,7 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 
 | 컬럼 | 타입 | NULL | 기본값 | 키 | 설명 |
 | --- | --- | --- | --- | --- | --- |
-| `provider` | TEXT | N | | PK | 로그인 공급자. 지금은 `local`(Tevro 비밀번호)만 있고, 사내 LDAP·SSO는 새 공급자 값으로 더한다 |
+| `provider` | TEXT | N | | PK | 로그인 공급자. 지금은 `local`(Tevro 비밀번호)만 있고, LDAP·OIDC 같은 외부 계정은 새 공급자 값으로 더한다 |
 | `subject` | TEXT | N | | PK | 공급자 안의 ID. `local`은 아이디. `COLLATE NOCASE` |
 | `user_id` | TEXT | N | | FK | `users.id`, ON DELETE CASCADE |
 | `secret_hash` | TEXT | Y | NULL | | `local`의 비밀번호 해시. PHC 문자열 `$argon2id$v=19$m=19456,t=2,p=1$<솔트>$<해시>`(Node.js 내장 `crypto.argon2`). 외부 공급자는 NULL |

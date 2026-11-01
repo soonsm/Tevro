@@ -1,5 +1,5 @@
 // 사용자·로그인·세션·개인 액세스 토큰(ADR-0004). 데이터는 store와 같은 SQLite 파일의 계정 테이블(스키마 3)에 둔다.
-// 로그인 수단은 사용자와 따로 둔다. 지금은 로컬 비밀번호만 있고, LDAP·SSO 같은 사내 계정은 PasswordProvider를 더해 붙인다.
+// 로그인 수단은 사용자와 따로 둔다. 지금은 로컬 비밀번호만 있고, LDAP·OIDC 같은 외부 계정 공급자는 PasswordProvider를 더해 붙인다.
 import { argon2, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CreatedTokenDto, Role, TokenDto, TokenScope, UserDto } from '../shared/types.ts';
 import { ApiError, invalidInput } from './errors.ts';
@@ -183,7 +183,7 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
       return row ? toUserDto(row) : null;
     },
 
-    /** 사용자와 로컬 비밀번호를 함께 만든다. 비밀번호를 주지 않으면 사내 계정 공급자로만 로그인하는 사용자다. */
+    /** 사용자와 로컬 비밀번호를 함께 만든다. 비밀번호를 주지 않으면 외부 계정 공급자로만 로그인하는 사용자다. */
     async createUser(input: { username?: unknown; displayName?: unknown; role?: unknown; password?: unknown }): Promise<UserDto> {
       const username = readUsername(input.username);
       const displayName = readDisplayName(input.displayName) ?? username;
@@ -241,7 +241,7 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
     /** 본인이 현재 비밀번호를 확인한 뒤 바꾼다. 지금 세션만 남기고 나머지 세션은 끊는다. */
     async changeOwnPassword(actor: Actor, current: unknown, next: unknown): Promise<void> {
       const identity = sql.getLocalIdentityOf.get(actor.user.id);
-      if (!identity?.secret_hash) throw invalidInput('Tevro 비밀번호가 없는 계정입니다. 사내 계정 비밀번호는 그쪽에서 바꾸세요.');
+      if (!identity?.secret_hash) throw invalidInput('Tevro 비밀번호가 없는 계정입니다. 외부 계정의 비밀번호는 그 계정을 관리하는 곳에서 바꾸세요.');
       if (typeof current !== 'string' || !(await verifyPassword(current, identity.secret_hash))) {
         throw invalidInput('현재 비밀번호가 맞지 않습니다.');
       }
@@ -281,7 +281,7 @@ export function createAccounts(db: Db, options: { now?: () => number; providers?
         }
         throw failed;
       }
-      // 사내 계정 공급자가 확인했어도 Tevro에 연결된 사용자가 없으면 들어올 수 없다(관리자가 먼저 사용자를 만든다).
+      // 외부 계정 공급자가 확인했어도 Tevro에 연결된 사용자가 없으면 들어올 수 없다(관리자가 먼저 사용자를 만든다).
       if (!identity) throw new ApiError(403, 'FORBIDDEN', 'Tevro에 등록되지 않은 계정입니다. 관리자에게 사용자 등록을 요청하세요.');
       const user = requireUser(identity.user_id);
       if (user.active !== 1) throw new ApiError(403, 'FORBIDDEN', '비활성화된 계정입니다. 관리자에게 문의하세요.');
@@ -396,7 +396,7 @@ function readText(value: unknown, label: string, max: number): string {
   return text;
 }
 
-// 사내 계정 아이디(사번, 이메일 등)를 그대로 쓸 수 있게 영문·숫자와 . _ @ - 를 받는다.
+// 외부 계정 아이디(사번, 이메일 등)를 그대로 쓸 수 있게 영문·숫자와 . _ @ - 를 받는다.
 function readUsername(value: unknown): string {
   const username = readText(value, '아이디(username)', 64);
   if (!/^[A-Za-z0-9._@-]+$/.test(username)) throw invalidInput('아이디(username): 영문, 숫자와 . _ @ - 만 쓸 수 있습니다.');
