@@ -1,5 +1,9 @@
 # Tevro
 
+> **Tevro** is a self-hosted tool for seeing a project's tasks, their dependencies, and progress on one graph. It comes with a web UI and a CLI that AI agents can use, and it runs without internet access. Apache-2.0 licensed. The UI and docs are in Korean only.
+>
+> Quick start: `docker compose up -d`, then open http://localhost:4000 and enter the setup code from `docker compose logs tevro`.
+
 프로젝트의 공정(할 일)과 선후관계, 진행 상태를 한 화면에서 보는 도구입니다. 직접 설치해 쓰는 오픈소스(Apache-2.0)이며, 외부 네트워크 없이도 동작합니다. 전체 요구사항과 결정 기록은 [`Tevro/`](Tevro/) 문서 폴더에, 앞으로 할 일은 [`Tevro/roadmap.md`](Tevro/roadmap.md)에 있습니다.
 
 ## 이번 버전에 들어간 것
