@@ -19,7 +19,8 @@
   - 상위 바꾸기(연결이 있으면 지워질 연결을 먼저 보여 주고 함께 지움), 하위가 있는 공정을 지우면 하위까지 삭제
   - 상태별 개수와 남은 공정은 말단 공정(하위가 없는 공정) 기준
 - 그래프: 연결 없는 공정까지 모두 표시, 자동 배치, 고른 공정의 앞뒤 경로 강조, 상태별 개수
-- Jira 이슈·Confluence 문서 링크(공정당 각 1개, 링크만 저장)
+- Jira 이슈·Confluence 문서 링크(공정당 각 1개)
+- Jira 연동(Data Center, 선택): 각자 자기 Jira 토큰으로 공정에서 이슈 만들기(필수 입력 칸은 그때 Jira에 물어 받음), 선후관계를 Jira 링크로, 연결된 공정의 상태·기한·담당자를 Jira와 주고받기(읽을 때 5분 기준으로 가져오고, Tevro에서 바꾸면 Jira에 먼저 반영). 아래 'Jira 연동'
 - 기한·담당자: 공정마다 기한(날짜)과 담당자(Tevro 사용자). 기한이 지난 공정은 '지연'으로 표시하고, 남은 공정을 기한 순으로 보며 '내가 맡은 일'만 거를 수 있음. 상위보다 늦은 하위 기한은 막지 않고 알림
 - 카드 위치 저장: 끌어서 옮긴 자리를 저장해 모두가 같은 위치를 봄. [자동 정렬]은 그 층의 저장 위치를 지우고 다시 배치
 - 템플릿: 공용 템플릿(관리자가 관리, 모두 사용)과 내 템플릿(만든 사람만). 빈 템플릿 만들기, 프로젝트·템플릿을 복사해 템플릿으로 저장, 템플릿으로 새 프로젝트 만들기(진행 상태 초기화, Jira 링크 비움, Confluence 링크 복사), 출처(템플릿 이름·판) 기록. 아래 '템플릿'
@@ -29,7 +30,7 @@
 
 ## 아직 넣지 않은 것
 
-외부 계정(OIDC·LDAP) 로그인, Jira 연동(이슈 생성·스프린트·상태 반영), 영어 화면, 상대 기한(템플릿), 변경 묶음·dry-run·동시 수정 충돌 감지, 프로젝트 삭제, 여러 층을 한 화면에 펼쳐 보기, 오프라인 설치 꾸러미. 순서와 세부는 [`Tevro/roadmap.md`](Tevro/roadmap.md)에 있습니다.
+외부 계정(OIDC·LDAP) 로그인, Jira 스프린트·웹훅·Jira Cloud, 상대 기한(템플릿), 변경 묶음·dry-run·동시 수정 충돌 감지, 프로젝트 삭제, 여러 층을 한 화면에 펼쳐 보기, 오프라인 설치 꾸러미. 순서와 세부는 [`Tevro/roadmap.md`](Tevro/roadmap.md)에 있습니다.
 
 > 서버는 기본적으로 이 컴퓨터(localhost)에서만 접속됩니다. 다른 PC에서 쓰거나 인터넷에 올릴 때는 HTTPS 프록시 뒤에 둡니다(아래 '인터넷에 올리기').
 
@@ -68,6 +69,8 @@ TEVRO_TOKEN=tevro_pat_… npm run demo
 | `TEVRO_SERVER` | `http://localhost:4000` | CLI가 접속할 서버 |
 | `TEVRO_TOKEN` | 없음 | CLI: 개인 액세스 토큰. 없으면 `--token-file`, 그다음 `config set-token`으로 저장한 파일(`~/.config/tevro/token`) |
 | `TEVRO_COOKIE_SECURE` | 없음 | 서버: `1`이면 로그인 쿠키에 항상 Secure. 없으면 프록시의 `X-Forwarded-Proto: https`를 보고 붙임 |
+| `TEVRO_JIRA_URL` | 없음 | 서버: Jira Data Center 주소(예: `https://jira.example.com`). 있으면 Jira 연동을 켬 |
+| `TEVRO_SECRET_KEY` | 없음 | 서버: 사람마다의 Jira 토큰을 암호화하는 32바이트 키(`openssl rand -base64 32`). 바꾸면 모두 Jira 토큰을 다시 등록해야 하므로 데이터와 함께 백업 |
 | `TEVRO_TRUST_PROXY` | 없음 | 서버: `1`이면 리버스 프록시가 붙인 `X-Forwarded-For`의 마지막 값을 접속 주소로 봄(로그인 실패 제한). 프록시 뒤에서만 켤 것 |
 | `TEVRO_TRIAL` | 없음 | `1`이면 체험 모드(아래). 데이터 파일과 로그인을 쓰지 않음 |
 
@@ -115,6 +118,21 @@ TEVRO_TOKEN=tevro_pat_… npm run demo
 - **판과 출처:** 프로젝트에는 '템플릿 ○○ N판으로 만듦'이 남습니다. 판은 템플릿을 고친 뒤 다시 프로젝트를 만들 때 하나 오릅니다(같은 판이면 같은 정의). 템플릿을 지워도 프로젝트와 출처 기록은 남습니다.
 - **체험 모드:** 예시 데이터마다 공용 템플릿이 하나씩 있습니다(`trial/*.json`의 `templates`).
 
+## Jira 연동
+
+[ADR-0009](Tevro/adr/0009-jira-integration.md). Jira Data Center(개인 액세스 토큰)를 대상으로 합니다.
+
+- **켜기:** 서버에 `TEVRO_JIRA_URL`과 `TEVRO_SECRET_KEY`를 줍니다. 오라클 설치 스크립트는 `--jira-url`을 받고 비밀키를 알아서 만들어 계속 씁니다.
+- **내 토큰:** 각자 계정 메뉴의 **Jira 연결**에서 자기 Jira 개인 액세스 토큰을 등록합니다(Jira 프로필 → 개인 액세스 토큰). Tevro는 그 사람이 누른 작업만 그 사람의 토큰으로 처리합니다. 공용 서비스 계정은 쓰지 않습니다.
+- **프로젝트 설정:** 프로젝트 위 Jira 띠의 **Jira 설정**에서 Jira 프로젝트 키, 기본 이슈 유형, Tevro 상태를 바꿀 때 옮길 Jira 상태(추천값을 채워 줌), 선후관계 링크 유형을 정합니다.
+- **이슈 만들기:** **Jira 이슈 만들기**에서 공정을 고르고 이슈마다 유형을 정합니다. 사이트가 요구하는 필수 입력 칸(예: 스토리 포인트)은 그때 Jira에 물어 표에 띄웁니다. 제목·설명·기한·담당자·보고자를 넘기고, 이미 진행 중·완료인 공정은 Jira 상태도 옮깁니다. 선후관계는 링크로 남깁니다(방향을 읽어서 확인). 미리 보기로 먼저 볼 수 있고, 응답을 받지 못한 생성은 '결과 미확인'으로 두었다가 다시 시도할 때 Jira에서 찾아 연결합니다.
+- **연결된 공정:** 상태(Jira 상태 분류로)·기한·담당자는 Jira가 원본입니다.
+  - 가져오기: 프로젝트를 읽을 때(웹·CLI·에이전트) 마지막 조회 뒤 5분이 지났으면 읽는 사람의 토큰으로 먼저 가져옵니다. 웹은 열어 두면 5분마다 다시 읽고, [Jira에서 새로고침]은 바로 가져옵니다. 서버가 혼자 주기적으로 조회하지는 않습니다.
+  - 바꾸기: Tevro에서 바꾸면 Jira에 먼저 반영하고 성공해야 저장합니다. 마지막 조회 뒤 Jira에서 바뀌었으면 지금 Jira 값을 보여 주고 확인을 받습니다. Jira 토큰이 없는 사람은 이 세 값을 바꿀 수 없습니다.
+  - Jira 담당자가 Tevro 사용자와 짝이 없으면 Jira 표시 이름만 보입니다. 짝은 본인이 토큰을 등록하면 자동이고, 관리자가 **사용자 관리 → Jira 짝**에서 정할 수도 있습니다.
+  - 제목·설명은 만들 때 한 번만 넘깁니다. Jira에 연결된 상위 공정은 자동 완료하지 않습니다.
+- **하지 않는 것:** 스프린트(칸반 기준), 웹훅·주기 조회, 하위 작업 유형, Jira Cloud, 여러 Jira 사이트.
+
 ## CLI
 
 ```sh
@@ -148,12 +166,21 @@ node src/cli/main.ts template save --from <프로젝트 또는 템플릿 ID> --n
 node src/cli/main.ts template use <템플릿 ID> --name "결제 모듈 개편"            # 템플릿으로 새 프로젝트
 node src/cli/main.ts template update <템플릿 ID> --official                     # 공용 템플릿으로 지정(관리자)
 node src/cli/main.ts template delete <템플릿 ID> --yes
+
+# Jira (서버에 Jira가 연결돼 있을 때)
+node src/cli/main.ts jira token set --stdin < jira-token.txt                   # 내 Jira 토큰 등록
+node src/cli/main.ts jira setup --project <프로젝트 ID> --jira-project ABC      # 상태 짝·링크 유형은 추천값
+node src/cli/main.ts jira create --project <프로젝트 ID> --dry-run              # 연결 안 된 말단 공정 전부(미리 보기)
+node src/cli/main.ts jira create --project <프로젝트 ID> --task <공정 ID> --issue-type 이야기 --field "Story Points=3"
+node src/cli/main.ts jira refresh --project <프로젝트 ID>                       # 지금 Jira에서 가져오기
+node src/cli/main.ts task status <공정 ID> --set done                           # 연결된 공정이면 Jira에 먼저 반영
+node src/cli/main.ts task update <공정 ID> --deadline 2026-12-01 --jira-confirm # 종료 코드 5(Jira에서 바뀜)를 받은 뒤
 ```
 
 `npm link`를 한 번 하면 `node src/cli/main.ts` 대신 `tevro`로 쓸 수 있습니다.
 
 - `--json`을 붙이면 stdout에 `{"schemaVersion":1,"data":…}`를 쓰고, 실패하면 stderr에 `{"schemaVersion":1,"error":…}`를 씁니다.
-- 종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·`--yes` 필요, 3 검증 실패(순환, 다른 층 연결, 자기 하위로 옮기기, 연결이 남은 공정 옮기기 등), 4 인증·권한(토큰 없음·만료·폐기, 범위·역할 부족, 다른 사람도 읽을 수 있는 토큰 파일), 6 대상 없음, 8 서버 연결 실패.
+- 종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·`--yes` 필요, 3 검증 실패(순환, 다른 층 연결, 자기 하위로 옮기기, 연결이 남은 공정 옮기기 등), 4 인증·권한(토큰 없음·만료·폐기, 범위·역할 부족, 다른 사람도 읽을 수 있는 토큰 파일, 내 Jira 토큰 없음), 5 Jira에서 바뀜(확인 후 `--jira-confirm`), 6 대상 없음, 7 Jira 연동 실패(일부 실패 포함), 8 서버 연결 실패.
 - 토큰은 `TEVRO_TOKEN`, `--token-file <경로>`(권한 600), `tevro config set-token --stdin`으로 저장한 파일 중 하나로 받습니다. 명령행 인자로는 받지 않고, 출력·오류에도 쓰지 않습니다. `tevro config show`는 토큰을 어디서 읽는지만 보여 줍니다.
 - 상태를 바꾸다 상위 공정이 자동으로 바뀌면 함께 알려 줍니다(`--json`에서는 `autoTransitions`).
 

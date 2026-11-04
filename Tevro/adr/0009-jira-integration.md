@@ -134,3 +134,12 @@ Tevro 프로젝트마다 편집자 이상이 한 번 정한다.
 2. Tevro에서 상태 바꾸면 Jira 전환
 3. 이슈 만들기(하나·일괄, 필수 필드 묻기, 미리 보기, 결과 저장)와 선후관계 링크
 4. CLI
+
+## 구현 메모(2026-11-04)
+
+- 서버: `src/server/jira.ts`(REST 어댑터), `src/server/jiraService.ts`(흐름), `src/server/secrets.ts`(토큰 암호화), 스키마 6(`Tevro/db-schema.md` 4.9). 시험은 `test/fakeJira.ts`(가짜 Data Center)와 `test/jira.test.ts`.
+- 상태 짝이 없을 때는 그 이슈의 Jira 프로젝트에서 그 분류의 첫 상태로 옮긴다(설정 화면의 추천값과 같은 규칙). 분류만 보고 고르면 '완료' 대신 같은 분류의 '안 함'으로 갈 수 있어서다.
+- 워크플로 전환은 목표 쪽으로 가거나 같은 분류 안에서 옆으로 가는 상태를 거쳐 최대 3단계까지 찾는다(예: 열림 → 진행 중 → 검토 중 → 완료).
+- 링크 방향: 요청의 inward/outward를 사이트가 어떻게 해석하는지 문서만으로 확신할 수 없어, 처음 만든 링크를 읽어 '선행 이슈에서 본 outwardIssue = 후속 이슈'인지 확인한다. 반대면 지우고 바꿔 만들고 `jira_projects.link_reversed`에 기억한다.
+- 오류 코드와 HTTP 상태: `JIRA_NOT_CONFIGURED` 409, `JIRA_TOKEN_REQUIRED` 403, `JIRA_AUTH`·`JIRA_REJECTED`·`JIRA_TRANSITION` 424, `JIRA_UNAVAILABLE` 502·504, `JIRA_CHANGED` 409. CLI 종료 코드: `JIRA_CHANGED` 5, `JIRA_TOKEN_REQUIRED` 4, 그 밖의 `JIRA_*`와 일부 실패 7.
+- 실제 사이트에서 확인할 것: 링크 방향 해석, 설명 필드 렌더러, 사이트 필수 필드 형식(숫자·선택 외), 호출 제한.

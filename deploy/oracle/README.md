@@ -138,6 +138,7 @@ sudo bash /opt/tevro/deploy/oracle/install.sh --trial
 | 최신 코드로 갱신 | `sudo bash /opt/tevro/deploy/oracle/install.sh` (인자 없이. 처음 정한 도메인·브랜치·체험 모드를 그대로 씀). 스크립트도 먼저 최신으로 받아 그것으로 실행합니다 |
 | 체험 모드 켜기·끄기 | 같은 명령에 `--trial` 또는 `--no-trial`. 한 번 정하면 이후 갱신에도 유지됩니다(7장) |
 | 도메인 바꾸기 | 새 도메인의 DNS를 서버 공인 IP로 건 뒤 `sudo bash /opt/tevro/deploy/oracle/install.sh --domain <새 도메인>`. 이후 갱신에도 새 도메인이 쓰이고, 예전 도메인으로는 더는 열리지 않습니다. 데이터와 계정은 그대로입니다 |
+| Jira 연동 켜기·끄기 | `sudo bash /opt/tevro/deploy/oracle/install.sh --jira-url https://jira.example.com` / `--no-jira`. 주소는 기억하고, Jira 토큰을 암호화하는 `TEVRO_SECRET_KEY`는 처음 한 번 만들어 `/etc/tevro/tevro.env`에 계속 둔다(데이터와 함께 백업). 각자 웹의 계정 메뉴 → Jira 연결에서 자기 토큰을 등록 |
 | 사용자 관리(서버에서) | `sudo tevro-admin user list`, `user create --username <아이디> --role viewer\|editor\|admin`, `user reset-password <아이디>`, `user set-role <아이디> <역할>`, `user activate\|deactivate <아이디>`. 웹의 사용자 관리와 같은 일을 하며, 관리자가 로그인할 수 없을 때 씁니다 |
 | 상태·로그 | `systemctl status tevro`, `journalctl -u tevro -f`, 인증서는 `journalctl -u caddy -f` |
 | 다시 시작 | `sudo systemctl restart tevro` |

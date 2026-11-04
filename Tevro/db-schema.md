@@ -1,7 +1,7 @@
 # Tevro — 테이블 설계서(ERD)
 
 - 문서 상태: MVP 코드 기준 설명서. 스키마의 원본은 코드(`src/server/store.ts`의 `SCHEMA`와 `MIGRATIONS`)이며, 스키마를 바꾸면 이 문서도 함께 고친다.
-- 스키마 버전: 5(기한·담당자·카드 위치 추가). 버전 이력은 7장
+- 스키마 버전: 6(Jira 연동 추가). 버전 이력은 7장
 - 작성 기준일: 2026-10-25, 계정 테이블 추가 2026-10-31, 템플릿 컬럼 추가 2026-10-31
 - 대상 DB: SQLite 3.53(`better-sqlite3`에 포함), 파일 하나(`data/tevro.db`, 위치는 `TEVRO_DATA_DIR`로 바꿈)
 - 관련 문서: [ADR-0003 저장소와 동시 수정 모델](./adr/0003-storage-and-concurrency.md), [ADR-0004 사용자 인증·권한](./adr/0004-authentication-authorization.md), [ADR-0005 식별자 체계와 삭제 정책](./adr/0005-identifiers-and-deletion.md), [제품 요구사항 §6.9 공정 계층, §7](./product-requirements.md)
@@ -104,6 +104,11 @@ erDiagram
 | `auth_identities` | 로그인 수단(공급자 + 공급자 안의 ID) | 사용자 하나에 속한다 |
 | `sessions` | 웹 로그인 세션 | 사용자 하나에 속한다 |
 | `access_tokens` | CLI·AI 에이전트용 개인 액세스 토큰 | 발급한 사용자 하나에 속한다 |
+| `task_positions` | 저장한 카드 위치 | 공정 하나에 속한다 |
+| `jira_tokens` | 사람마다의 Jira 개인 액세스 토큰(암호화) | 사용자 하나에 속한다 |
+| `jira_projects` | 프로젝트의 Jira 연결 설정과 마지막 조회 | 프로젝트 하나에 속한다 |
+| `jira_operations` | Jira 이슈·링크 만들기 결과 기록 | 프로젝트 하나에 속한다 |
+| `jira_dependency_links` | Tevro 선후관계 ↔ 만든 Jira 링크 | 프로젝트 하나에 속한다 |
 
 ## 3. 관계
 
@@ -251,6 +256,17 @@ NULL 열의 `N`은 NOT NULL이다. 길이 제한과 형식 검사는 서버가 �
 
 사람이 끌어서 옮긴 카드만 행이 있고, 없는 카드는 자동 배치한다. 모두가 같은 위치를 본다. 바꿀 수 있는 사람(프로젝트는 편집자 이상, 템플릿은 고칠 수 있는 사람)만 저장하고, [자동 정렬]은 그 층의 행을 지운다. 템플릿으로 프로젝트를 만들 때 함께 복사한다. 인덱스: `task_positions_by_project (project_id)`.
 
+### 4.9 Jira 연동 — 스키마 6(ADR-0009)
+
+| 테이블·컬럼 | 설명 |
+| --- | --- |
+| `users.jira_name` | 짝지은 Jira 사용자 name. Jira 토큰을 등록하면 채우고 관리자가 정할 수도 있다. Jira 담당자 ↔ Tevro 담당자를 잇는다 |
+| `tasks.jira_snapshot` | 연결된 이슈의 마지막 조회 결과(JSON: 키, 상태 id·이름·분류, 제목, 기한, 담당자, 조회 시각·조회한 사람, 이 이슈의 조회 오류). 다른 이슈로 바꾸거나 연결을 끊으면 비운다. Jira가 원본인 상태·기한·담당자는 `status`·`deadline`·`assignee_user_id`에 그대로 써 둔다 |
+| `jira_tokens` | `user_id`(PK, FK → users, CASCADE), `sealed`(TEVRO_SECRET_KEY로 AES-256-GCM 암호화한 토큰), `key_fingerprint`(어느 키로 암호화했는지), `jira_name`, `jira_display_name`, `created_at`, `last_used_at` |
+| `jira_projects` | `project_id`(PK, FK → projects, CASCADE), `jira_project_key`, `issue_type_id`·`issue_type_name`(기본 유형), `status_map`(JSON: Tevro 상태 → Jira 상태 id·이름), `link_type`, `link_reversed`(사이트가 링크 방향을 반대로 해석하면 1), `field_defaults`(JSON: 이슈 유형별 마지막에 쓴 필수 필드 값), `last_refresh_at`·`last_refresh_by`·`last_refresh_error` |
+| `jira_operations` | 만들기 결과 한 건: `kind`(issue·link), `task_id` 또는 `from_task_id`·`to_task_id`, `state`(ok·failed·unknown), `issue_key`, `detail`, `user_id`, `at`. '결과 미확인'(unknown)인 공정은 다시 만들 때 먼저 Jira에서 찾는다 |
+| `jira_dependency_links` | (`project_id`, `from_task_id`, `to_task_id`) PK, `from_key`, `to_key`. Tevro가 만들었거나 이미 있음을 확인한 링크. Tevro에서 선후관계를 지워도 Jira 링크는 지우지 않는다 |
+
 ## 5. 무결성: DB 제약과 서버 검증
 
 순환과 계층 고리, 같은 층 규칙은 여러 행에 걸친 조건이라 DB 제약으로 표현할 수 없다. 서버는 모든 쓰기를 `BEGIN IMMEDIATE` 트랜잭션으로 열고, 그 안에서 현재 상태를 읽어 검사한 뒤 저장한다. 그래서 A → B와 B → A가 동시에 들어와도 하나만 저장되고(ADR-0003, AC-18), 하위 두 개의 완료가 동시에 들어와도 상위 자동 완료를 놓치지 않는다(ADR-0003 1.7).
@@ -318,6 +334,7 @@ API 응답에는 있지만 테이블에는 없는 값이다. 저장하면 상태
 | 3 | `users`, `auth_identities`, `sessions`, `access_tokens`와 인덱스 | 새 테이블만 만든다. 기존 데이터는 그대로이고 사용자는 0명이라, 올린 뒤 서버 관리 명령으로 첫 관리자를 만든다 |
 | 5 | `tasks.deadline`, `tasks.assignee_user_id`, `tasks_by_assignee` 인덱스, `task_positions` 테이블 | `ALTER TABLE ADD COLUMN`과 새 테이블. 기존 공정은 기한·담당자·저장 위치가 없다 |
 | 4 | `projects`의 `kind`, `owner_user_id`, `official`, `template_version`, `template_dirty`, `source_*` 컬럼과 `projects_by_kind` 인덱스 | `ALTER TABLE ADD COLUMN`. 기존 행은 모두 프로젝트(`kind = 'project'`)이고 출처가 없다 |
+| 6 | `users.jira_name`, `tasks.jira_snapshot`, `jira_tokens`, `jira_projects`, `jira_operations`, `jira_dependency_links` | `ALTER TABLE ADD COLUMN`과 새 테이블. 기존 Jira 주소는 그대로이고, 서버에 Jira를 켜면 그 사이트의 주소가 연결로 바뀐다 |
 
 - 새 단계를 더할 때는 `SCHEMA`(새 DB용)와 `MIGRATIONS`(올리기용)를 함께 고치고, 한 번 배포한 단계는 고치지 않는다. `test/migration.test.ts`가 예전 DB를 올린 결과와 새로 만든 DB의 구조가 같은지 확인한다.
 - 백업 기능은 아직 없다. 서버를 멈춘 뒤 `data` 폴더를 통째로 복사하면 된다.

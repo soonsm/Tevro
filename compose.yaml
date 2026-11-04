@@ -16,6 +16,11 @@ services:
       TEVRO_TRUST_PROXY: "0"
       # HTTPS 프록시 뒤라면 1로 두어 세션 쿠키에 Secure를 붙인다(X-Forwarded-Proto를 보내는 프록시면 없어도 된다).
       TEVRO_COOKIE_SECURE: "0"
+      # Jira 연동(선택). 이 파일 옆 .env에 적는다. 예:
+      #   TEVRO_JIRA_URL=https://jira.example.com
+      #   TEVRO_SECRET_KEY=<openssl rand -base64 32의 결과. 바꾸면 모두 Jira 토큰을 다시 등록하므로 백업해 둘 것>
+      TEVRO_JIRA_URL: ${TEVRO_JIRA_URL:-}
+      TEVRO_SECRET_KEY: ${TEVRO_SECRET_KEY:-}
 
 volumes:
   tevro-data:

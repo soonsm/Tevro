@@ -391,3 +391,5 @@ PRD §6.8 예시의 명사(`project`, `task`, `dependency`, `graph`)와 동사 �
 [node-release]: https://github.com/nodejs/Release
 [node-cli]: https://nodejs.org/api/cli.html
 [node-sea]: https://nodejs.org/api/single-executable-applications.html
+
+추기(2026-11-04, Jira 명령, [ADR-0009](./0009-jira-integration.md)): `jira status`, `jira token set --stdin`·`remove`, `jira setup`, `jira refresh`, `jira create [--task] [--issue-type] [--field 이름=값] [--no-links] [--dry-run]`, `jira links [--dry-run]`을 더하고 `task update`·`task status`에 `--jira-confirm`을 둔다. 종료 코드 5(충돌)를 Jira에서 값이 바뀐 경우(`JIRA_CHANGED`)에, 예약해 둔 7(외부 연동 실패)을 그 밖의 `JIRA_*` 오류와 일부 실패(만들기·링크 중 실패나 결과 미확인이 있음)에 쓴다. Jira 토큰이 없으면(`JIRA_TOKEN_REQUIRED`) 4다.
