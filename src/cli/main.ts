@@ -32,10 +32,15 @@ import type {
   TaskDto,
   PersonDto,
   TemplateSummaryDto,
+  JiraCreateMetaDto,
+  JiraCreateResultDto,
+  JiraLinkResult,
+  JiraTokenStatusDto,
+  ProjectJiraDto,
 } from '../shared/types.ts';
 
 // ADR-0007 종료 코드 중 MVP에서 쓰는 것
-const EXIT = { ok: 0, failure: 1, usage: 2, validation: 3, auth: 4, notFound: 6, unreachable: 8 } as const;
+const EXIT = { ok: 0, failure: 1, usage: 2, validation: 3, auth: 4, conflict: 5, notFound: 6, external: 7, unreachable: 8 } as const;
 
 // VALIDATION_* 밖에서 종료 코드 3(검증 실패)으로 다루는 구조 검증 오류
 const STRUCTURE_CODES = new Set([
@@ -94,7 +99,7 @@ const program = new Command('tevro')
   .addHelpText(
     'after',
     '\n인증: 웹 화면 [내 토큰]에서 개인 액세스 토큰을 발급해 TEVRO_TOKEN 환경변수에 넣거나 `tevro config set-token --stdin`으로 저장하세요(명령행 인자로는 받지 않음).' +
-      '\n종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·--yes 필요, 3 검증 실패, 4 인증·권한, 6 대상 없음, 8 서버 연결 실패',
+      '\n종료 코드: 0 성공, 1 기타 오류, 2 사용법 오류·--yes 필요, 3 검증 실패, 4 인증·권한, 5 Jira에서 바뀜(확인 필요), 6 대상 없음, 7 Jira 연동 실패(일부 실패 포함), 8 서버 연결 실패',
   );
 
 program
@@ -229,9 +234,11 @@ task
   .option('--confluence-url <url>', 'Confluence 문서 주소')
   .option('--deadline <YYYY-MM-DD>', '기한(날짜). 빈 값이면 지움')
   .option('--assignee <user>', '담당자의 아이디 또는 사용자 ID. 빈 값이면 지움')
-  .action(async (taskId: string, options: TaskOptions, command: Command) => {
+  .option('--jira-confirm', 'Jira에서 바뀐 값을 확인했으니 그래도 반영 (종료 코드 5를 받은 뒤)')
+  .action(async (taskId: string, options: TaskOptions & { jiraConfirm?: boolean }, command: Command) => {
     const api = client(command);
-    const input = await taskInput(options, api);
+    const input: Record<string, unknown> = await taskInput(options, api);
+    if (options.jiraConfirm) input.jiraConfirm = true;
     if (Object.keys(input).length === 0) {
       throw new CliFailure(EXIT.usage, { code: 'USAGE', detail: '바꿀 값을 하나 이상 지정하세요. (tevro task update --help)' });
     }
@@ -244,9 +251,11 @@ task
   .description('실행 상태 변경 (선행 조건이 미충족이어도 바꿀 수 있음)')
   .argument('<task-id>', '공정 ID')
   .addOption(new Option('--set <status>', '새 실행 상태').choices(TASK_STATUSES).makeOptionMandatory())
-  .action(async (taskId: string, options: { set: TaskDto['status'] }, command: Command) => {
+  .option('--jira-confirm', 'Jira에서 바뀐 값을 확인했으니 그래도 반영 (종료 코드 5를 받은 뒤)')
+  .action(async (taskId: string, options: { set: TaskDto['status']; jiraConfirm?: boolean }, command: Command) => {
     const result = await client(command).patch<TaskChangeResult>(`/api/v1/tasks/${segment(taskId)}`, {
       status: options.set,
+      ...(options.jiraConfirm ? { jiraConfirm: true } : {}),
     });
     emit(command, result, () => {
       const updated = result.task;
@@ -398,6 +407,227 @@ program
     emit(command, people, () =>
       people.length === 0 ? '사용자가 없습니다.' : table([['이름', '아이디', 'ID'], ...people.map((item) => [item.displayName, item.username, item.id])]),
     );
+  });
+
+/** --status 왼쪽에 쓰는 Tevro 상태 이름 */
+const TEVRO_STATUS_NAMES: Record<string, TaskDto['status']> = {
+  todo: 'todo',
+  'in-progress': 'in-progress',
+  done: 'done',
+  미착수: 'todo',
+  '진행 중': 'in-progress',
+  진행중: 'in-progress',
+  완료: 'done',
+};
+
+const ITEM_STATE_LABELS: Record<string, string> = {
+  'will-create': '만들 예정',
+  created: '만듦',
+  recovered: '찾아서 연결',
+  skipped: '건너뜀',
+  failed: '실패',
+  unknown: '결과 미확인',
+};
+
+const LINK_STATE_LABELS: Record<string, string> = {
+  'will-create': '만들 예정',
+  created: '만듦',
+  exists: '이미 있음',
+  skipped: '건너뜀',
+  'needs-issue': '이슈 없음',
+  failed: '실패',
+};
+
+// ── Jira 연동(ADR-0009). Jira는 내 Tevro 계정에 등록한 내 Jira 토큰으로 서버가 부른다. ──
+const jira = program.command('jira').description('Jira 연동 (서버에 Jira가 연결돼 있을 때)');
+const collect = (value: string, previous: string[]) => [...previous, value];
+
+jira
+  .command('status')
+  .description('내 Jira 연결(토큰) 상태')
+  .action(async (_options, command: Command) => {
+    const status = await client(command).get<JiraTokenStatusDto>('/api/v1/jira/token');
+    emit(command, status, () =>
+      [
+        `Jira: ${status.siteUrl ?? '연결 안 됨'}`,
+        status.connected
+          ? `연결됨: ${status.jiraDisplayName} (${status.jiraName}) · 마지막 사용 ${status.lastUsedAt ? status.lastUsedAt.slice(0, 16).replace('T', ' ') : '없음'}`
+          : '내 Jira 토큰이 없습니다: tevro jira token set --stdin',
+        status.problem ? `문제: ${status.problem}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  });
+
+const jiraToken = jira.command('token').description('내 Jira 개인 액세스 토큰');
+
+jiraToken
+  .command('set')
+  .description('표준 입력으로 받은 Jira 토큰을 등록 (Jira에 확인한 뒤 서버에 암호화해 저장)')
+  .requiredOption('--stdin', '표준 입력에서 읽기 (예: tevro jira token set --stdin < jira-token.txt)')
+  .action(async (_options, command: Command) => {
+    const token = (await readStdin()).trim();
+    if (!token) throw new CliFailure(EXIT.usage, { code: 'USAGE', detail: '표준 입력으로 Jira 토큰을 넣으세요.' });
+    const status = await client(command).put<JiraTokenStatusDto>('/api/v1/jira/token', { token });
+    emit(command, status, () => `Jira 토큰을 등록했습니다: ${status.jiraDisplayName} (${status.jiraName})`);
+  });
+
+jiraToken
+  .command('remove')
+  .description('내 Jira 토큰을 지움')
+  .action(async (_options, command: Command) => {
+    const status = await client(command).delete<JiraTokenStatusDto>('/api/v1/jira/token');
+    emit(command, status, () => 'Jira 토큰을 지웠습니다.');
+  });
+
+jira
+  .command('setup')
+  .description('프로젝트를 Jira 프로젝트에 연결 (상태 짝·링크 유형은 추천값으로 채움, 편집자 이상)')
+  .requiredOption('--project <project-id>', 'Tevro 프로젝트 ID')
+  .requiredOption('--jira-project <key>', 'Jira 프로젝트 키 (예: ABC)')
+  .option('--issue-type <name-or-id>', '기본 이슈 유형 (생략하면 추천값)')
+  .option('--status <tevro=jira>', '상태 짝을 바꿈. 여러 번 줄 수 있음. 예: --status 완료=완료 --status in-progress="In Progress"', collect, [])
+  .option('--link-type <name>', '선후관계를 남길 링크 유형 (생략하면 추천값)')
+  .option('--no-links', '선후관계 링크를 만들지 않음')
+  .action(
+    async (options: { project: string; jiraProject: string; issueType?: string; status: string[]; linkType?: string; links: boolean }, command: Command) => {
+      const api = client(command);
+      const base = `/api/v1/projects/${segment(options.project)}/jira`;
+      const found = await api.get<{
+        projectKey: string;
+        issueTypes: { id: string; name: string }[];
+        statuses: { id: string; name: string; category: string | null }[];
+        linkTypes: { name: string }[];
+        suggested: { statusMap: ProjectJiraDto['statusMap']; linkType: string | null; issueTypeId: string | null };
+      }>(`${base}/options?${new URLSearchParams({ projectKey: options.jiraProject.toUpperCase() })}`);
+      const type = options.issueType
+        ? found.issueTypes.find((item) => item.id === options.issueType || item.name === options.issueType)
+        : found.issueTypes.find((item) => item.id === found.suggested.issueTypeId);
+      if (options.issueType && !type) {
+        throw new CliFailure(EXIT.validation, { code: 'VALIDATION_INPUT', detail: `이슈 유형이 없습니다: ${options.issueType} (있는 것: ${found.issueTypes.map((item) => item.name).join(', ')})` });
+      }
+      const statusMap = { ...found.suggested.statusMap };
+      for (const pair of options.status) {
+        const [left, ...rest] = pair.split('=');
+        const tevro = TEVRO_STATUS_NAMES[left.trim()];
+        const wanted = rest.join('=').trim();
+        const target = found.statuses.find((item) => item.id === wanted || item.name === wanted);
+        if (!tevro || !target) {
+          throw new CliFailure(EXIT.validation, {
+            code: 'VALIDATION_INPUT',
+            detail: `상태 짝을 읽지 못했습니다: ${pair} (예: 완료=완료. Jira 상태: ${found.statuses.map((item) => item.name).join(', ')})`,
+          });
+        }
+        statusMap[tevro] = { id: target.id, name: target.name };
+      }
+      const linkType = !options.links ? null : (options.linkType ?? found.suggested.linkType);
+      if (linkType && !found.linkTypes.some((item) => item.name === linkType)) {
+        throw new CliFailure(EXIT.validation, { code: 'VALIDATION_INPUT', detail: `링크 유형이 없습니다: ${linkType} (있는 것: ${found.linkTypes.map((item) => item.name).join(', ')})` });
+      }
+      const saved = await api.put<ProjectJiraDto>(base, { projectKey: found.projectKey, issueTypeId: type?.id ?? null, statusMap, linkType });
+      emit(command, saved, () =>
+        [
+          `Jira 프로젝트를 연결했습니다: ${saved.projectKey}`,
+          `  기본 이슈 유형  ${saved.issueTypeName ?? '-'}`,
+          `  상태 짝         ${TASK_STATUSES.map((status) => `${STATUS_LABELS[status]}→${saved.statusMap[status]?.name ?? '(첫 상태)'}`).join(', ')}`,
+          `  링크 유형       ${saved.linkType ?? '만들지 않음'}`,
+        ].join('\n'),
+      );
+    },
+  );
+
+jira
+  .command('refresh')
+  .description('연결된 이슈의 상태·기한·담당자를 지금 Jira에서 가져옴 (보통은 읽을 때 5분마다 자동)')
+  .requiredOption('--project <project-id>', '프로젝트 ID')
+  .action(async (options: { project: string }, command: Command) => {
+    const graph = await client(command).post<GraphDto>(`/api/v1/projects/${segment(options.project)}/jira/refresh`, {});
+    const linked = graph.tasks.filter((item) => item.jira);
+    emit(command, graph, () =>
+      linked.length === 0
+        ? 'Jira에 연결된 공정이 없습니다.'
+        : table([
+            ['공정', 'Jira', 'Jira 상태', 'Tevro 상태', '기한', '담당'],
+            ...linked.map((item) => [
+              item.title,
+              item.jira!.key,
+              item.jira!.error ? `조회 실패: ${item.jira!.error}` : (item.jira!.statusName ?? '-'),
+              STATUS_LABELS[item.status],
+              item.deadline ?? '-',
+              item.assigneeName ?? (item.jira!.assigneeUnmapped ? `${item.jira!.assigneeName} (Jira)` : '-'),
+            ]),
+          ]),
+    );
+  });
+
+jira
+  .command('create')
+  .description('공정으로 Jira 이슈 만들기 (편집자 이상). --task가 없으면 아직 연결 안 된 말단 공정 전부')
+  .requiredOption('--project <project-id>', '프로젝트 ID')
+  .option('--task <task-id>', '만들 공정. 여러 번 줄 수 있음', collect, [])
+  .option('--issue-type <name-or-id>', '이슈 유형 (생략하면 프로젝트 설정의 기본 유형)')
+  .option('--field <이름=값>', 'Jira 필수 입력 칸 값. 여러 번 줄 수 있음. 예: --field "Story Points=3"', collect, [])
+  .option('--no-links', '선후관계 링크를 만들지 않음')
+  .option('--dry-run', '만들지 않고 무엇을 할지만 보기')
+  .action(
+    async (options: { project: string; task: string[]; issueType?: string; field: string[]; links: boolean; dryRun?: boolean }, command: Command) => {
+      const api = client(command);
+      const base = `/api/v1/projects/${segment(options.project)}/jira`;
+      let meta = await api.get<JiraCreateMetaDto>(`${base}/create-meta`);
+      if (options.issueType) {
+        const type = meta.issueTypes.find((item) => item.id === options.issueType || item.name === options.issueType);
+        if (!type) {
+          throw new CliFailure(EXIT.validation, { code: 'VALIDATION_INPUT', detail: `이슈 유형이 없습니다: ${options.issueType} (있는 것: ${meta.issueTypes.map((item) => item.name).join(', ')})` });
+        }
+        if (type.id !== meta.issueTypeId) meta = await api.get<JiraCreateMetaDto>(`${base}/create-meta?${new URLSearchParams({ issueTypeId: type.id })}`);
+      }
+      const fields: Record<string, unknown> = {};
+      for (const pair of options.field) {
+        const [left, ...rest] = pair.split('=');
+        const field = meta.fields.find((item) => item.id === left.trim() || item.name === left.trim());
+        if (!field) {
+          throw new CliFailure(EXIT.validation, {
+            code: 'VALIDATION_INPUT',
+            detail: `이 이슈 유형에 묻는 칸이 아닙니다: ${left} (묻는 칸: ${meta.fields.map((item) => item.name).join(', ') || '없음'})`,
+          });
+        }
+        fields[field.id] = rest.join('=');
+      }
+      let taskIds = options.task;
+      if (taskIds.length === 0) {
+        const graph = await api.get<GraphDto>(`/api/v1/projects/${segment(options.project)}/graph`);
+        taskIds = graph.tasks.filter((item) => !item.jiraUrl && item.childCount === 0).map((item) => item.id);
+        if (taskIds.length === 0) throw new CliFailure(EXIT.usage, { code: 'USAGE', detail: 'Jira 이슈를 만들 공정이 없습니다(모두 연결돼 있음). --task로 고르세요.' });
+      }
+      const result = await api.post<JiraCreateResultDto>(`${base}/issues`, {
+        dryRun: options.dryRun === true,
+        createLinks: options.links,
+        items: taskIds.map((taskId) => ({ taskId, issueTypeId: meta.issueTypeId, fields })),
+      });
+      emit(command, result, () => createResultText(result));
+      if (result.items.some((item) => item.state === 'failed' || item.state === 'unknown') || result.links.some((link) => link.state === 'failed')) {
+        process.exitCode = EXIT.external;
+      }
+    },
+  );
+
+jira
+  .command('links')
+  .description('선후관계를 Jira 링크로 다시 반영 (양쪽 모두 이슈가 있는 연결만)')
+  .requiredOption('--project <project-id>', '프로젝트 ID')
+  .option('--dry-run', '만들지 않고 무엇을 할지만 보기')
+  .action(async (options: { project: string; dryRun?: boolean }, command: Command) => {
+    const result = await client(command).post<{ links: JiraLinkResult[]; graph: GraphDto }>(`/api/v1/projects/${segment(options.project)}/jira/links`, {
+      dryRun: options.dryRun === true,
+    });
+    const titles = titleMap(result.graph);
+    emit(command, result.links, () =>
+      result.links.length === 0
+        ? '선후관계가 없습니다.'
+        : result.links.map((link) => `${LINK_STATE_LABELS[link.state]}  ${titles.get(link.from)} → ${titles.get(link.to)}${link.detail ? `  (${link.detail})` : ''}`).join('\n'),
+    );
+    if (result.links.some((link) => link.state === 'failed')) process.exitCode = EXIT.external;
   });
 
 const template = program
@@ -621,6 +851,10 @@ function client(command: Command) {
     }
     if (!response.ok) {
       const problem = data as Problem;
+      if (problem.code === 'JIRA_CHANGED' && problem.jira) {
+        const now = problem.jira;
+        problem.detail += ` 지금 Jira: 상태 ${now.statusName}, 기한 ${now.deadline ?? '없음'}, 담당 ${now.assigneeName ?? '없음'}. 그래도 반영하려면 --jira-confirm을 붙여 다시 실행하세요.`;
+      }
       if (problem.code === 'UNAUTHENTICATED' && !token) {
         problem.detail += ' 웹 화면 [내 토큰]에서 개인 액세스 토큰을 발급해 TEVRO_TOKEN에 넣거나 `tevro config set-token --stdin`으로 저장하세요.';
       }
@@ -633,13 +867,16 @@ function client(command: Command) {
     get: <T>(path: string) => call<T>('GET', path),
     post: <T>(path: string, body: unknown) => call<T>('POST', path, body),
     patch: <T>(path: string, body: unknown) => call<T>('PATCH', path, body),
+    put: <T>(path: string, body: unknown) => call<T>('PUT', path, body),
     delete: <T>(path: string) => call<T>('DELETE', path),
   };
 }
 
 function exitCodeOf(code: string): number {
   if (code.startsWith('VALIDATION_') || STRUCTURE_CODES.has(code)) return EXIT.validation;
-  if (code === 'UNAUTHENTICATED' || code === 'FORBIDDEN' || code === 'RATE_LIMITED') return EXIT.auth;
+  if (code === 'UNAUTHENTICATED' || code === 'FORBIDDEN' || code === 'RATE_LIMITED' || code === 'JIRA_TOKEN_REQUIRED') return EXIT.auth;
+  if (code === 'JIRA_CHANGED') return EXIT.conflict;
+  if (code.startsWith('JIRA_')) return EXIT.external;
   return code === 'NOT_FOUND' ? EXIT.notFound : EXIT.failure;
 }
 
@@ -821,7 +1058,15 @@ function taskDetail(item: TaskDto, graph: GraphDto): string {
     ['하위 공정', item.childCount === 0 ? '없음' : `${item.doneChildCount}/${item.childCount} 완료 — ${named(children)}`],
     ['기한', item.deadline ? `${item.deadline}${isOverdue(item, localToday()) ? ' (지연)' : ''}` : '-'],
     ['담당', item.assigneeName ?? '-'],
-    ['Jira', item.jiraUrl ? `${item.jiraKey ?? ''} ${item.jiraUrl}`.trim() : '-'],
+    [
+      'Jira',
+      item.jira
+        ? `${item.jira.key} · ${item.jira.statusName ?? '아직 조회 안 함'}${item.jira.error ? ` · 조회 실패: ${item.jira.error}` : ''} · 조회 ${item.jira.fetchedAt ? item.jira.fetchedAt.slice(0, 16).replace('T', ' ') : '-'} (상태·기한·담당은 Jira가 원본)`
+        : item.jiraUrl
+          ? `${item.jiraKey ?? ''} ${item.jiraUrl}`.trim()
+          : '-',
+    ],
+    ...(item.jira?.assigneeUnmapped ? [['Jira 담당', `${item.jira.assigneeName} (Tevro 사용자와 짝 없음)`]] : []),
     ['Confluence', item.confluenceUrl ?? '-'],
     ['설명', item.description === '' ? '-' : item.description.replace(/\n/g, '\n' + ' '.repeat(18))],
   ];
@@ -889,4 +1134,20 @@ function displayWidth(text: string): number {
     width += wide ? 2 : 1;
   }
   return width;
+}
+
+function createResultText(result: JiraCreateResultDto): string {
+  const lines = [result.dryRun ? `미리 보기 (Jira ${result.projectKey}, 아직 만들지 않음)` : `Jira ${result.projectKey}`];
+  for (const item of result.items) {
+    lines.push(
+      `  ${pad(ITEM_STATE_LABELS[item.state], 12)}${item.title}${item.issueKey ? ` → ${item.issueKey}` : ''}${item.issueTypeName ? ` (${item.issueTypeName})` : ''}${item.detail ? `  ${item.detail}` : ''}`,
+    );
+  }
+  if (result.links.length > 0) {
+    const counts = new Map<string, number>();
+    for (const link of result.links) counts.set(link.state, (counts.get(link.state) ?? 0) + 1);
+    lines.push(`  선후관계 링크: ${[...counts].map(([state, count]) => `${LINK_STATE_LABELS[state]} ${count}`).join(', ')}`);
+    for (const link of result.links.filter((item) => item.state === 'failed')) lines.push(`    실패 ${link.fromKey} → ${link.toKey}: ${link.detail}`);
+  }
+  return lines.join('\n');
 }

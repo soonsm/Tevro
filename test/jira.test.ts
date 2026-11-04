@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import type { GraphDto, ProjectDto, TaskDto } from '../src/shared/types.ts';
 import { STATUSES, startFakeJira, type FakeJira } from './fakeJira.ts';
@@ -436,5 +440,69 @@ describe('이슈 만들기', () => {
     const response = await p.call('POST', `/projects/${p.id}/jira/issues`, { items: [{ taskId: a.id }] });
     assert.equal(response.status, 409);
     assert.equal(response.data.code, 'JIRA_NOT_CONFIGURED');
+  });
+});
+
+describe('CLI', () => {
+  const CLI = resolve(import.meta.dirname, '../src/cli/main.ts');
+  let home: string;
+  before(() => {
+    home = mkdtempSync(join(tmpdir(), 'tevro-jira-cli-'));
+  });
+  after(() => rmSync(home, { recursive: true, force: true }));
+  const tevro = (who: string, args: string[], stdin?: string): Promise<{ code: number; stdout: string; stderr: string }> =>
+    new Promise((done) => {
+      const child = execFile(
+        process.execPath,
+        [CLI, ...args],
+        { env: { ...process.env, TEVRO_SERVER: server.origin, TEVRO_TOKEN: tokens[who], XDG_CONFIG_HOME: home } },
+        (error, stdout, stderr) => done({ code: error ? Number(error.code) : 0, stdout, stderr }),
+      );
+      if (stdin !== undefined) child.stdin!.end(stdin);
+    });
+
+  it('토큰 등록, 프로젝트 연결, 미리 보기, 만들기, 새로고침, 충돌 시 종료 코드 5와 --jira-confirm', async () => {
+    assert.match((await tevro('park', ['jira', 'status'])).stdout, /내 Jira 토큰이 없습니다/);
+    const set = await tevro('park', ['jira', 'token', 'set', '--stdin'], 'token-lee\n');
+    assert.equal(set.code, 0, set.stderr);
+    assert.match(set.stdout, /Lee Jira/);
+
+    const p = await project('CLI Jira');
+    const a = await p.add({ title: '분석' });
+    const b = await p.add({ title: '개발' });
+    await p.call('POST', `/projects/${p.id}/dependencies`, { from: a.id, to: b.id });
+    const setup = await tevro('kim', ['jira', 'setup', '--project', p.id, '--jira-project', 'abc', '--status', '완료=완료']);
+    assert.equal(setup.code, 0, setup.stderr);
+    assert.match(setup.stdout, /상태 짝\s+미착수→열림, 진행 중→진행 중, 완료→완료/);
+    assert.match(setup.stdout, /링크 유형\s+Blocks/);
+
+    const dry = await tevro('kim', ['jira', 'create', '--project', p.id, '--dry-run']);
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /미리 보기[\s\S]*만들 예정\s+분석[\s\S]*만들 예정\s+개발/);
+    const before = fake.issues.size;
+    const created = await tevro('kim', ['jira', 'create', '--project', p.id, '--field', 'Story Points=2', '--json']);
+    assert.equal(created.code, 0, created.stderr);
+    const result = JSON.parse(created.stdout).data;
+    assert.equal(fake.issues.size, before + 2);
+    assert.equal(fake.issues.get(result.items[0].issueKey)!.fields.customfield_10106, 2);
+    assert.deepEqual(result.links.map((link: { state: string }) => link.state), ['created']);
+
+    const key = result.items[1].issueKey as string;
+    fake.issues.get(key)!.statusId = STATUSES.review.id;
+    const refreshed = await tevro('kim', ['jira', 'refresh', '--project', p.id]);
+    assert.match(refreshed.stdout, new RegExp(`개발\\s+${key}\\s+검토 중\\s+진행 중`));
+
+    fake.issues.get(key)!.duedate = '2027-02-01';
+    const conflict = await tevro('kim', ['task', 'update', b.id, '--deadline', '2027-03-01']);
+    assert.equal(conflict.code, 5);
+    assert.match(conflict.stderr, /지금 Jira: 상태 검토 중, 기한 2027-02-01[\s\S]*--jira-confirm/);
+    const confirmed = await tevro('kim', ['task', 'update', b.id, '--deadline', '2027-03-01', '--jira-confirm']);
+    assert.equal(confirmed.code, 0, confirmed.stderr);
+    assert.equal(fake.issues.get(key)!.duedate, '2027-03-01');
+    assert.match((await tevro('kim', ['task', 'show', b.id])).stdout, new RegExp(`Jira\\s+${key} · 검토 중`));
+
+    // Jira 토큰이 없는 사람은 종료 코드 4
+    await tevro('park', ['jira', 'token', 'remove']);
+    assert.equal((await tevro('park', ['task', 'status', b.id, '--set', 'done'])).code, 4);
   });
 });

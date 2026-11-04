@@ -8,6 +8,7 @@
 #   sudo bash /opt/tevro/deploy/oracle/install.sh
 #   이미 설치된 서버에서는 옵션을 보기 전에 최신 코드를 받아 새 스크립트로 다시 실행하므로, 새 옵션도 바로 쓸 수 있다.
 # 체험 서버로 쓰기(로그인 없이, 브라우저 창마다 trial/*.json 예시 데이터의 사본): --trial, 끄기: --no-trial
+# Jira 연동(ADR-0009): --jira-url https://jira.example.com, 끄기: --no-jira. Jira 토큰을 암호화할 서버 비밀키는 처음 한 번 만들어 계속 쓴다.
 #
 # 하는 일: Node.js 24와 Caddy 설치 → tevro 사용자·폴더 → 코드 받기·빌드 → systemd 서비스 →
 #          Caddy로 HTTPS(Let's Encrypt 인증서 자동) → Oracle Ubuntu 이미지 방화벽(iptables)에 80·443 열기.
@@ -37,12 +38,14 @@ fail() {
 
 usage() {
   cat <<'EOF'
-사용법: sudo bash install.sh --domain <도메인> [--branch <브랜치>] [--trial | --no-trial]
+사용법: sudo bash install.sh --domain <도메인> [--branch <브랜치>] [--trial | --no-trial] [--jira-url <주소> | --no-jira]
   --domain    Tevro를 열 주소. 이 서버의 공인 IP를 가리키는 도메인(예: tevro.example.com, myname.duckdns.org)
   --branch    설치할 Git 브랜치(기본: main)
   --trial     체험 서버로 연다. 로그인 없이 누구나 조작할 수 있고, 바꾼 내용은 각자의 브라우저 창에만 남는다
               (창을 닫으면 처음 데이터로). 예시 데이터는 저장소의 trial/*.json
   --no-trial  체험 모드를 끄고 보통 서버(사용자 계정 로그인, 데이터 파일)로 되돌린다
+  --jira-url  Jira Data Center 주소(예: https://jira.example.com). 이슈 만들기와 상태·기한·담당자 주고받기를 켠다
+  --no-jira   Jira 연동을 끈다(등록된 토큰은 남아 있어 다시 켜면 그대로 쓴다)
 처음 설치한 뒤에는 인자 없이 다시 실행하면 같은 설정으로 최신 코드를 받아 다시 시작합니다.
 보통 서버의 첫 관리자: sudo tevro-admin user create --username <아이디> --role admin
 EOF
@@ -237,13 +240,15 @@ wait_for_server() {
 
 main() {
   update_self "$@"
-  local domain="" branch="" trial=""
+  local domain="" branch="" trial="" jira_url="" jira_set=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --domain) domain="${2:?--domain 값이 없습니다}"; shift 2 ;;
       --branch) branch="${2:?--branch 값이 없습니다}"; shift 2 ;;
       --trial) trial=1; shift ;;
       --no-trial) trial=0; shift ;;
+      --jira-url) jira_url="${2:?--jira-url 값이 없습니다}"; jira_set=1; shift 2 ;;
+      --no-jira) jira_url=""; jira_set=1; shift ;;
       -h | --help) usage; exit 0 ;;
       *) usage >&2; fail "모르는 옵션: $1" ;;
     esac
@@ -261,7 +266,10 @@ main() {
     domain="${domain:-${TEVRO_DOMAIN:-}}"
     branch="${branch:-${TEVRO_BRANCH:-}}"
     trial="${trial:-${TEVRO_TRIAL:-}}"
+    [ "$jira_set" = 1 ] || jira_url="${TEVRO_JIRA_URL:-}"
   fi
+  jira_url="${jira_url%/}"
+  [ -z "$jira_url" ] || [[ "$jira_url" =~ ^https?://[^[:space:]\"\']+$ ]] || fail "Jira 주소 형식이 아닙니다: $jira_url"
   branch="${branch:-main}"
   trial="${trial:-0}"
   [[ "$trial" =~ ^[01]$ ]] || fail "$INSTALL_CONF 의 TEVRO_TRIAL은 0 또는 1이어야 합니다: $trial"
@@ -304,8 +312,11 @@ $busy"
 
   log "6/7 설정과 서비스"
   # 예전 설치의 공용 비밀번호(TEVRO_PASSWORD)는 사용자 계정 로그인으로 바뀌어 더 쓰지 않으므로 옮기지 않는다.
-  local had_password=0
+  local had_password=0 secret_key=""
   if [ -f "$ENV_FILE" ] && grep -q '^TEVRO_PASSWORD=' "$ENV_FILE"; then had_password=1; fi
+  # Jira 토큰을 암호화하는 서버 비밀키. 한 번 만들면 계속 쓴다(바뀌면 모두 Jira 토큰을 다시 등록해야 한다).
+  if [ -f "$ENV_FILE" ]; then secret_key="$(sed -n 's/^TEVRO_SECRET_KEY=//p' "$ENV_FILE" | head -1)"; fi
+  if [ -z "$secret_key" ]; then secret_key="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64"))')"; fi
   (
     umask 077
     cat >"$ENV_FILE" <<EOF
@@ -318,10 +329,13 @@ TEVRO_TRIAL=$trial
 TEVRO_COOKIE_SECURE=1
 # Caddy 뒤에 있으므로 Caddy가 붙인 X-Forwarded-For로 접속 주소를 본다(로그인 실패 제한).
 TEVRO_TRUST_PROXY=1
+# 사람마다의 Jira 토큰을 암호화하는 키. 바꾸거나 지우면 모두 Jira 토큰을 다시 등록해야 한다. 백업해 두세요.
+TEVRO_SECRET_KEY=$secret_key
 EOF
+    [ -z "$jira_url" ] || printf '# Jira 연동(ADR-0009)\nTEVRO_JIRA_URL=%s\n' "$jira_url" >>"$ENV_FILE"
   )
   chmod 600 "$ENV_FILE"
-  printf 'TEVRO_DOMAIN=%s\nTEVRO_BRANCH=%s\nTEVRO_TRIAL=%s\n' "$domain" "$branch" "$trial" >"$INSTALL_CONF"
+  printf 'TEVRO_DOMAIN=%s\nTEVRO_BRANCH=%s\nTEVRO_TRIAL=%s\nTEVRO_JIRA_URL=%q\n' "$domain" "$branch" "$trial" "$jira_url" >"$INSTALL_CONF"
   write_admin_command
   write_service
   wait_for_server
@@ -346,6 +360,10 @@ EOF
     printf '  로그인    사용자 계정(웹 화면 오른쪽 위 계정 메뉴에서 사용자 관리·토큰 발급)\n'
     printf '  관리 명령 sudo tevro-admin user list | create | reset-password | set-role | activate | deactivate\n'
     printf '  데이터    %s/tevro.db\n' "$DATA_DIR"
+    if [ -n "$jira_url" ]; then
+      printf '  Jira      %s (각자 계정 메뉴의 [Jira 연결]에서 자기 Jira 토큰을 등록)\n' "$jira_url"
+      printf '  비밀키    %s 의 TEVRO_SECRET_KEY (Jira 토큰 암호화. 데이터와 함께 백업)\n' "$ENV_FILE"
+    fi
     if [ "$had_password" = 1 ]; then
       printf '  공용 비밀번호(TEVRO_PASSWORD)는 없앴습니다. 이제 각자 계정으로 로그인합니다.\n'
     fi
