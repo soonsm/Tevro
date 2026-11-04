@@ -303,6 +303,57 @@ export interface ProjectJiraDto {
   lastRefreshError: string | null;
 }
 
+/** 이슈를 만들 때 Tevro가 채우지 못해 사람에게 묻는 Jira 필수 필드(사이트마다 다르다) */
+export interface JiraCreateFieldDto {
+  id: string;
+  name: string;
+  type: 'number' | 'string' | 'date' | 'option' | 'options';
+  /** option·options에서 고를 값 */
+  options?: { id: string; name: string }[];
+  /** 기본값: 이 프로젝트에서 마지막에 쓴 값, 없으면 Jira 기본값 */
+  default: unknown;
+}
+
+export interface JiraCreateMetaDto {
+  projectKey: string;
+  /** 고를 수 있는 이슈 유형(하위 작업 유형 제외) */
+  issueTypes: { id: string; name: string }[];
+  issueTypeId: string;
+  fields: JiraCreateFieldDto[];
+  /** Tevro가 다룰 수 없는 형식의 필수 필드(있으면 이 유형으로는 만들 수 없다) */
+  unsupported: string[];
+  /** 만들기 화면에 있어 Tevro가 넘기는 값 */
+  fills: { description: boolean; duedate: boolean; assignee: boolean; reporter: boolean };
+}
+
+export interface JiraCreateItemResult {
+  taskId: string;
+  title: string;
+  /** will-create: 미리 보기에서 만들 예정. recovered: 응답을 못 받았던 생성을 찾아 연결함. unknown: 시간 초과로 결과를 모름 */
+  state: 'will-create' | 'created' | 'recovered' | 'skipped' | 'failed' | 'unknown';
+  issueKey: string | null;
+  issueTypeName: string | null;
+  detail: string | null;
+}
+
+export interface JiraLinkResult {
+  from: string;
+  to: string;
+  fromKey: string | null;
+  toKey: string | null;
+  state: 'will-create' | 'created' | 'exists' | 'skipped' | 'needs-issue' | 'failed';
+  detail: string | null;
+}
+
+export interface JiraCreateResultDto {
+  dryRun: boolean;
+  projectKey: string;
+  items: JiraCreateItemResult[];
+  links: JiraLinkResult[];
+  /** 실제로 만들었으면 바뀐 그래프 */
+  graph?: GraphDto;
+}
+
 /** 내 Jira 연결(개인 액세스 토큰). 토큰 값은 주지 않는다 */
 export interface JiraTokenStatusDto {
   /** 서버에 Jira 사이트가 설정됐는지 */

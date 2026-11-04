@@ -1144,6 +1144,44 @@ export function createStore(db: Db, options: { jiraSite?: string | null } = {}) 
       },
     ),
 
+    /** 만들기·링크 결과를 남긴다 */
+    recordJiraOperation: write(
+      (op: { projectId: string; kind: 'issue' | 'link'; taskId?: string; fromTaskId?: string; toTaskId?: string; state: 'ok' | 'failed' | 'unknown'; issueKey?: string | null; detail?: string | null; userId: string }): void => {
+        db.prepare(
+          `INSERT INTO jira_operations (id, project_id, kind, task_id, from_task_id, to_task_id, state, issue_key, detail, user_id, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(newId('jop'), op.projectId, op.kind, op.taskId ?? null, op.fromTaskId ?? null, op.toTaskId ?? null, op.state, op.issueKey ?? null, op.detail ?? null, op.userId, new Date().toISOString());
+      },
+    ),
+
+    /** 공정마다 마지막 만들기 결과(결과 미확인을 다시 시도할 때 본다) */
+    lastJiraIssueOperations(projectId: string): Map<string, { state: 'ok' | 'failed' | 'unknown'; issueKey: string | null; detail: string | null; at: string }> {
+      const rows = db
+        .prepare<[string], { task_id: string; state: 'ok' | 'failed' | 'unknown'; issue_key: string | null; detail: string | null; at: string }>(
+          `SELECT task_id, state, issue_key, detail, at FROM jira_operations
+           WHERE project_id = ? AND kind = 'issue' ORDER BY at, rowid`,
+        )
+        .all(projectId);
+      return new Map(rows.map((row) => [row.task_id, { state: row.state, issueKey: row.issue_key, detail: row.detail, at: row.at }]));
+    },
+
+    /** Tevro가 만든(또는 이미 있음을 확인한) 선후관계 링크 */
+    jiraDependencyLinks(projectId: string): { from: string; to: string; fromKey: string; toKey: string }[] {
+      return db
+        .prepare<[string], { from_task_id: string; to_task_id: string; from_key: string; to_key: string }>(
+          'SELECT from_task_id, to_task_id, from_key, to_key FROM jira_dependency_links WHERE project_id = ?',
+        )
+        .all(projectId)
+        .map((row) => ({ from: row.from_task_id, to: row.to_task_id, fromKey: row.from_key, toKey: row.to_key }));
+    },
+
+    recordJiraDependencyLink: write((projectId: string, from: string, to: string, fromKey: string, toKey: string): void => {
+      db.prepare(
+        `INSERT INTO jira_dependency_links (project_id, from_task_id, to_task_id, from_key, to_key, created_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (project_id, from_task_id, to_task_id) DO UPDATE SET from_key = excluded.from_key, to_key = excluded.to_key`,
+      ).run(projectId, from, to, fromKey, toKey, new Date().toISOString());
+    }),
+
     /** 새로 만든 이슈를 공정에 연결한다(만들기 결과) */
     linkJiraIssue: write((taskId: string, url: string): void => {
       requireTask(taskId);

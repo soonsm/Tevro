@@ -304,3 +304,137 @@ describe('프로젝트 연결 설정', () => {
     }
   });
 });
+
+describe('이슈 만들기', () => {
+  async function configured(name: string) {
+    const p = await project(name);
+    const saved = await p.call('PUT', `/projects/${p.id}/jira`, {
+      projectKey: 'ABC',
+      issueTypeId: '10001',
+      statusMap: {
+        todo: { id: STATUSES.open.id, name: '열림' },
+        'in-progress': { id: STATUSES.progress.id, name: '진행 중' },
+        done: { id: STATUSES.done.id, name: '완료' },
+      },
+      linkType: 'Blocks',
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    return p;
+  }
+
+  it('Tevro가 채우지 못하는 필수 필드를 이슈 유형별로 알려 준다', async () => {
+    const p = await configured('필수 필드');
+    const task = (await p.call('GET', `/projects/${p.id}/jira/create-meta`)).data;
+    assert.equal(task.issueTypeId, '10001');
+    assert.deepEqual(task.issueTypes.map((type: { name: string }) => type.name), ['작업', '이야기']);
+    assert.deepEqual(task.fields, [{ id: 'customfield_10106', name: 'Story Points', type: 'number', default: 0 }]);
+    assert.deepEqual(task.fills, { description: true, duedate: true, assignee: true, reporter: true });
+    const story = (await p.call('GET', `/projects/${p.id}/jira/create-meta?issueTypeId=10002`)).data;
+    assert.deepEqual(story.fields.map((field: { name: string; type: string }) => `${field.name}:${field.type}`), ['Story Points:number', '난이도:option']);
+    assert.equal((await p.call('GET', `/projects/${p.id}/jira/create-meta?issueTypeId=10003`)).status, 422);
+  });
+
+  it('미리 보기는 아무것도 만들지 않고 만들 것·건너뛸 것·만들 링크를 보인다', async () => {
+    fake.addIssue({ key: 'ABC-90' });
+    const p = await configured('미리 보기');
+    const a = await p.add({ title: 'A' });
+    const b = await p.add({ title: 'B' });
+    const c = await p.add({ title: 'C' });
+    const linked = await p.add({ title: '이미 연결' });
+    await p.call('POST', `/projects/${p.id}/dependencies`, { from: a.id, to: b.id });
+    await p.call('POST', `/projects/${p.id}/dependencies`, { from: b.id, to: c.id });
+    await p.call('PATCH', `/tasks/${linked.id}`, { jiraUrl: browse('ABC-90'), jiraConfirm: true });
+    const before = fake.issues.size;
+    const preview = (await p.call('POST', `/projects/${p.id}/jira/issues`, { dryRun: true, items: [{ taskId: a.id }, { taskId: b.id }, { taskId: linked.id }] })).data;
+    assert.equal(fake.issues.size, before);
+    assert.deepEqual(preview.items.map((item: { title: string; state: string }) => `${item.title}:${item.state}`), ['A:will-create', 'B:will-create', '이미 연결:skipped']);
+    assert.deepEqual(preview.links.map((link: { state: string }) => link.state), ['will-create', 'needs-issue']);
+  });
+
+  it('만들면 제목·설명·기한·담당자·보고자와 필수 필드를 넘기고, 진행된 공정은 Jira 상태도 옮기며, 선후관계를 링크로 남긴다', async () => {
+    const p = await configured('만들기');
+    const a = await p.add({ title: '설계', description: '설계 문서 작성' });
+    const b = await p.add({ title: '구현', deadline: '2026-12-10', assigneeId: ids.lee });
+    await p.call('PATCH', `/tasks/${a.id}`, { status: 'done' });
+    await p.call('POST', `/projects/${p.id}/dependencies`, { from: a.id, to: b.id });
+    const created = await p.call('POST', `/projects/${p.id}/jira/issues`, { items: [{ taskId: a.id, fields: { customfield_10106: 3 } }, { taskId: b.id }] });
+    assert.equal(created.status, 201, JSON.stringify(created.data));
+    const [ra, rb] = created.data.items;
+    assert.deepEqual([ra.state, rb.state], ['created', 'created']);
+    const ia = fake.issues.get(ra.issueKey)!;
+    const ib = fake.issues.get(rb.issueKey)!;
+    assert.deepEqual([ia.summary, ia.description, ia.reporter, ia.fields.customfield_10106, ia.statusId], ['설계', '설계 문서 작성', 'kim.jira', 3, STATUSES.done.id]);
+    assert.deepEqual([ib.duedate, ib.assignee, ib.fields.customfield_10106], ['2026-12-10', 'lee.jira', 0]);
+    const g = created.data.graph as GraphDto;
+    assert.deepEqual([taskOf(g, a.id).jira!.key, taskOf(g, a.id).status, taskOf(g, a.id).jira!.statusName], [ra.issueKey, 'done', '완료']);
+    // A가 B를 막는다: A 이슈에서 보면 outwardIssue가 B
+    assert.deepEqual(created.data.links.map((link: { state: string }) => link.state), ['created']);
+    assert.deepEqual(fake.links.map((link) => [link.type, link.inward, link.outward]), [['Blocks', ra.issueKey, rb.issueKey]]);
+    // 다시 반영하면 이미 있다
+    const again = (await p.call('POST', `/projects/${p.id}/jira/links`, {})).data;
+    assert.deepEqual(again.links.map((link: { state: string }) => link.state), ['exists']);
+    assert.equal(fake.links.length, 1);
+    // 마지막에 쓴 필수 필드 값이 다음 기본값이 된다
+    const c = await p.add({ title: '시험' });
+    await p.call('POST', `/projects/${p.id}/jira/issues`, { items: [{ taskId: c.id, fields: { customfield_10106: 5 } }] });
+    assert.equal((await p.call('GET', `/projects/${p.id}/jira/create-meta`)).data.fields[0].default, 5);
+  });
+
+  it('Jira가 링크 방향을 반대로 해석하면 읽어서 확인한 뒤 바로잡고 그 방식을 기억한다', async () => {
+    fake.linkReversed = true;
+    try {
+      const p = await configured('링크 방향');
+      const a = await p.add({ title: 'A' });
+      const b = await p.add({ title: 'B' });
+      const c = await p.add({ title: 'C' });
+      await p.call('POST', `/projects/${p.id}/dependencies`, { from: a.id, to: b.id });
+      await p.call('POST', `/projects/${p.id}/dependencies`, { from: b.id, to: c.id });
+      const created = (await p.call('POST', `/projects/${p.id}/jira/issues`, { items: [a, b, c].map((task) => ({ taskId: task.id })) })).data;
+      const [ka, kb, kc] = created.items.map((item: { issueKey: string }) => item.issueKey);
+      assert.deepEqual(created.links.map((link: { state: string; detail: string }) => link.detail ?? link.state), ['created', 'created']);
+      // 반대로 해석하는 Jira에서는 inward=to, outward=from으로 요청해야 'from blocks to'가 된다
+      assert.deepEqual(fake.links.map((link) => [link.inward, link.outward]), [[kb, ka], [kc, kb]]);
+      assert.equal((server.db.prepare('SELECT link_reversed FROM jira_projects WHERE project_id = ?').get(p.id) as { link_reversed: number }).link_reversed, 1);
+    } finally {
+      fake.linkReversed = false;
+    }
+  });
+
+  it('필수 필드가 비면 그 공정만 실패하고, 고를 값은 이름으로도 받는다', async () => {
+    const p = await configured('필수 누락');
+    const a = await p.add({ title: '이야기 A' });
+    const b = await p.add({ title: '이야기 B' });
+    const result = (await p.call('POST', `/projects/${p.id}/jira/issues`, {
+      items: [
+        { taskId: a.id, issueTypeId: '10002' },
+        { taskId: b.id, issueTypeId: '10002', fields: { customfield_20000: '어려움' } },
+      ],
+    })).data;
+    assert.equal(result.items[0].state, 'failed');
+    assert.match(result.items[0].detail, /난이도: 값을 넣으세요/);
+    assert.equal(result.items[1].state, 'created');
+    assert.deepEqual(fake.issues.get(result.items[1].issueKey)!.fields.customfield_20000, { id: '2' });
+  });
+
+  it('응답을 받지 못한 생성은 "결과 미확인"으로 두고, 다시 시도하면 먼저 Jira에서 찾아 연결한다', async () => {
+    const p = await configured('결과 미확인');
+    const a = await p.add({ title: '시간 초과 공정' });
+    fake.hangNext('POST /rest/api/2/issue');
+    const first = (await p.call('POST', `/projects/${p.id}/jira/issues`, { items: [{ taskId: a.id }] })).data;
+    assert.equal(first.items[0].state, 'unknown');
+    // 실제로는 Jira에 만들어졌다고 하자
+    fake.addIssue({ key: 'ABC-777', summary: '시간 초과 공정', reporter: 'kim.jira' });
+    const before = fake.issues.size;
+    const retry = (await p.call('POST', `/projects/${p.id}/jira/issues`, { items: [{ taskId: a.id }] })).data;
+    assert.deepEqual([retry.items[0].state, retry.items[0].issueKey], ['recovered', 'ABC-777']);
+    assert.equal(fake.issues.size, before, '새로 만들지 않았다');
+  });
+
+  it('Jira 설정이 없으면 만들 수 없다고 알린다', async () => {
+    const p = await project('설정 없음');
+    const a = await p.add({ title: 'x' });
+    const response = await p.call('POST', `/projects/${p.id}/jira/issues`, { items: [{ taskId: a.id }] });
+    assert.equal(response.status, 409);
+    assert.equal(response.data.code, 'JIRA_NOT_CONFIGURED');
+  });
+});

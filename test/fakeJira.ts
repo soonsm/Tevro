@@ -125,7 +125,9 @@ export async function startFakeJira(): Promise<FakeJira> {
         .map((link) =>
           // 이 가짜는 요청의 inwardIssue=X, outwardIssue=Y를 'X [outward 설명] Y'(예: X blocks Y)로 저장한다.
           // linkReversed면 반대('Y [outward 설명] X')로 저장한다. Tevro는 만든 뒤 읽어서 방향을 확인하므로 둘 다 맞게 동작해야 한다.
-          (fake.linkReversed ? link.outward === issue.key : link.inward === issue.key) ? { id: link.id, type: { name: link.type }, outwardIssue: { key: link.outward } } : { id: link.id, type: { name: link.type }, inwardIssue: { key: link.inward } },
+          (fake.linkReversed ? link.outward === issue.key : link.inward === issue.key) 
+            ? { id: link.id, type: { name: link.type }, outwardIssue: { key: fake.linkReversed ? link.inward : link.outward } }
+            : { id: link.id, type: { name: link.type }, inwardIssue: { key: fake.linkReversed ? link.outward : link.inward } },
         ),
     },
   });

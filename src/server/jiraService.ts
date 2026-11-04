@@ -1,10 +1,32 @@
 // Jira 연동의 흐름(ADR-0009): 사람마다의 토큰, 프로젝트 연결 설정, 조회(5분 기준), Tevro에서 바꾼 값을 Jira에 먼저 반영, 이슈 만들기.
 // Jira는 그 작업을 요청한 사람의 토큰으로만 부른다. DB 쓰기는 store를 거친다.
-import type { JiraTokenStatusDto, JiraValuesDto, ProjectJiraDto } from '../shared/types.ts';
+import type {
+  GraphDto,
+  JiraCreateFieldDto,
+  JiraCreateItemResult,
+  JiraCreateMetaDto,
+  JiraCreateResultDto,
+  JiraLinkResult,
+  JiraTokenStatusDto,
+  JiraValuesDto,
+  ProjectJiraDto,
+  TaskDto,
+} from '../shared/types.ts';
 import type { TaskStatus } from '../shared/domain.ts';
 import type { Actor } from './accounts.ts';
 import { ApiError, invalidInput } from './errors.ts';
-import { ISSUE_KEY, createJiraClient, issueKeyOnSite, type JiraClient, type JiraClientOptions, type JiraIssue, type JiraStatus, type StatusCategory } from './jira.ts';
+import {
+  ISSUE_KEY,
+  browseUrl,
+  createJiraClient,
+  issueKeyOnSite,
+  type JiraClient,
+  type JiraClientOptions,
+  type JiraField,
+  type JiraIssue,
+  type JiraStatus,
+  type StatusCategory,
+} from './jira.ts';
 import type { SecretBox } from './secrets.ts';
 import { statusOfCategory, type Db, type JiraFetched, type LinkedTask, type Store } from './store.ts';
 
@@ -12,6 +34,10 @@ import { statusOfCategory, type Db, type JiraFetched, type LinkedTask, type Stor
 export const REFRESH_AFTER_MS = 5 * 60 * 1000;
 const CATEGORY_ORDER: Record<StatusCategory, number> = { new: 0, indeterminate: 1, done: 2 };
 const TEVRO_TO_CATEGORY: Record<TaskStatus, StatusCategory> = { todo: 'new', 'in-progress': 'indeterminate', done: 'done' };
+/** 이슈를 만들 때 Tevro가 직접 채우는 필드. 그 밖의 필수 필드는 사람에게 묻는다 */
+const TEVRO_FILLS = new Set(['summary', 'issuetype', 'project', 'reporter', 'description', 'duedate', 'assignee']);
+const MAX_CREATE = 200;
+const CREATE_CONCURRENCY = 4;
 
 export interface JiraServiceOptions {
   db: Db;
@@ -194,8 +220,347 @@ export function createJiraService({ db, store, site, box, boxProblem, client: cl
     );
   }
 
+  function requireSettings(projectId: string) {
+    const settings = store.jiraProjectSettings(projectId);
+    if (!settings.projectKey) {
+      throw new ApiError(409, 'JIRA_NOT_CONFIGURED', '먼저 프로젝트의 [Jira 설정]에서 이슈를 만들 Jira 프로젝트를 정하세요.');
+    }
+    return settings as typeof settings & { projectKey: string };
+  }
+
+  /** Jira 필드를 Tevro가 물을 수 있는 형식으로. 못 다루면 null */
+  function kindOf(field: JiraField): JiraCreateFieldDto['type'] | null {
+    const { type, items } = field.schema;
+    if (type === 'number' || type === 'string' || type === 'date') return type;
+    if (type === 'option' && field.allowedValues) return 'option';
+    if (type === 'array' && items === 'option' && field.allowedValues) return 'options';
+    return null;
+  }
+
+  function describeFields(projectKey: string, issueTypes: { id: string; name: string }[], issueTypeId: string, raw: JiraField[], saved: Record<string, unknown> | undefined): JiraCreateMetaDto {
+    const fields: JiraCreateFieldDto[] = [];
+    const unsupported: string[] = [];
+    for (const field of raw) {
+      if (TEVRO_FILLS.has(field.fieldId) || !field.required) continue;
+      const type = kindOf(field);
+      if (!type) {
+        unsupported.push(field.name);
+        continue;
+      }
+      const options = field.allowedValues?.map((item) => ({ id: String(item.id), name: String(item.value ?? item.name ?? item.id) }));
+      const jiraDefault = field.hasDefaultValue ? normalizeDefault(type, field.defaultValue) : null;
+      fields.push({ id: field.fieldId, name: field.name, type, ...(options ? { options } : {}), default: saved?.[field.fieldId] ?? jiraDefault });
+    }
+    const has = (id: string) => raw.some((field) => field.fieldId === id);
+    return {
+      projectKey,
+      issueTypes,
+      issueTypeId,
+      fields,
+      unsupported,
+      fills: { description: has('description'), duedate: has('duedate'), assignee: has('assignee'), reporter: has('reporter') },
+    };
+  }
+
+  /** 사람이 넣은 값을 Jira 필드 값으로. 비었으면 undefined, 틀리면 이유 */
+  function convert(field: JiraCreateFieldDto, value: unknown): { ok: unknown } | { missing: true } | { error: string } {
+    if (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)) return { missing: true };
+    switch (field.type) {
+      case 'number': {
+        const number = typeof value === 'number' ? value : Number(String(value).trim());
+        return Number.isFinite(number) ? { ok: number } : { error: `${field.name}: 숫자여야 합니다.` };
+      }
+      case 'string':
+        return { ok: String(value).slice(0, 10_000) };
+      case 'date':
+        return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? { ok: value } : { error: `${field.name}: YYYY-MM-DD 날짜여야 합니다.` };
+      case 'option': {
+        const id = typeof value === 'object' && value !== null ? String((value as { id?: unknown }).id) : String(value);
+        const option = field.options?.find((item) => item.id === id || item.name === id);
+        return option ? { ok: { id: option.id } } : { error: `${field.name}: 고를 수 있는 값이 아닙니다(${field.options?.map((item) => item.name).join(', ')}).` };
+      }
+      case 'options': {
+        const list = (Array.isArray(value) ? value : String(value).split(',')).map((item) => String(typeof item === 'object' && item !== null ? (item as { id?: unknown }).id : item).trim());
+        const picked = list.map((id) => field.options?.find((item) => item.id === id || item.name === id));
+        return picked.every(Boolean) ? { ok: picked.map((item) => ({ id: item!.id })) } : { error: `${field.name}: 고를 수 있는 값이 아닌 것이 있습니다.` };
+      }
+    }
+  }
+
+  async function createMeta(actor: Actor, projectId: string, issueTypeId: unknown, client = clientFor(actor), cache = new Map<string, JiraCreateMetaDto>()): Promise<JiraCreateMetaDto> {
+    const settings = requireSettings(projectId);
+    const typeKey = typeof issueTypeId === 'string' && issueTypeId !== '' ? issueTypeId : (settings.issueTypeId ?? '');
+    const cached = cache.get(typeKey);
+    if (cached) return cached;
+    const types = (await client.issueTypes(settings.projectKey)).filter((type) => !type.subtask).map(({ id, name }) => ({ id, name }));
+    const typeId = typeKey || types[0]?.id;
+    if (!typeId || !types.some((type) => type.id === typeId)) {
+      throw invalidInput(`Jira 프로젝트 ${settings.projectKey}에서 만들 수 있는 이슈 유형이 아닙니다: ${typeKey} (하위 작업 유형은 고를 수 없습니다)`);
+    }
+    const meta = describeFields(settings.projectKey, types, typeId, await client.createFields(settings.projectKey, typeId), settings.fieldDefaults[typeId]);
+    cache.set(typeKey, meta);
+    cache.set(typeId, meta);
+    return meta;
+  }
+
+  /** 선후관계를 Jira 링크로 남긴다(양쪽 모두 이슈가 있을 때만, 방향을 확인하며) */
+  async function syncLinks(actor: Actor, projectId: string, client: JiraClient, dryRun: boolean, graph: GraphDto): Promise<JiraLinkResult[]> {
+    const settings = store.jiraProjectSettings(projectId);
+    const keyOf = new Map(graph.tasks.map((task) => [task.id, task.jira?.key ?? null]));
+    const recorded = new Set(store.jiraDependencyLinks(projectId).map((link) => `${link.fromKey}>${link.toKey}`));
+    const results: JiraLinkResult[] = [];
+    let reversed = settings.linkReversed;
+    let verified = false;
+    for (const edge of graph.dependencies) {
+      const fromKey = keyOf.get(edge.from) ?? null;
+      const toKey = keyOf.get(edge.to) ?? null;
+      const base = { from: edge.from, to: edge.to, fromKey, toKey };
+      if (!settings.linkType) {
+        results.push({ ...base, state: 'skipped', detail: '[Jira 설정]에서 선후관계 링크 유형을 정하지 않았습니다.' });
+        continue;
+      }
+      if (!fromKey || !toKey) {
+        results.push({ ...base, state: 'needs-issue', detail: '양쪽 공정 모두 Jira 이슈가 있어야 링크를 만듭니다.' });
+        continue;
+      }
+      if (fromKey === toKey) {
+        results.push({ ...base, state: 'skipped', detail: '두 공정이 같은 이슈에 연결돼 있습니다.' });
+        continue;
+      }
+      if (recorded.has(`${fromKey}>${toKey}`)) {
+        results.push({ ...base, state: 'exists', detail: null });
+        continue;
+      }
+      if (dryRun) {
+        results.push({ ...base, state: 'will-create', detail: null });
+        continue;
+      }
+      try {
+        // 'from이 to를 막는다' = from 이슈에서 본 링크의 outwardIssue가 to(예: from blocks to)
+        const blocks = (links: Awaited<ReturnType<JiraClient['issueLinks']>>) =>
+          links.find((link) => link.type.name === settings.linkType && link.outwardIssue?.key === toKey);
+        if (blocks(await client.issueLinks(fromKey))) {
+          store.recordJiraDependencyLink(projectId, edge.from, edge.to, fromKey, toKey);
+          results.push({ ...base, state: 'exists', detail: 'Jira에 이미 있는 링크입니다.' });
+          continue;
+        }
+        await client.createLink(settings.linkType, reversed ? toKey : fromKey, reversed ? fromKey : toKey);
+        if (!verified) {
+          // 처음 만든 링크는 방향을 읽어서 확인한다. 반대로 만들어졌으면 지우고 바꿔서 다시 만들고, 그 방식을 기억한다.
+          const links = await client.issueLinks(fromKey);
+          if (!blocks(links)) {
+            const wrong = links.find((link) => link.type.name === settings.linkType && link.inwardIssue?.key === toKey);
+            if (!wrong) throw new ApiError(424, 'JIRA_REJECTED', `${fromKey} → ${toKey} 링크를 만든 뒤 찾지 못했습니다.`);
+            await client.deleteLink(wrong.id);
+            reversed = !reversed;
+            store.saveJiraProjectSettings(projectId, { linkReversed: reversed });
+            await client.createLink(settings.linkType, reversed ? toKey : fromKey, reversed ? fromKey : toKey);
+            if (!blocks(await client.issueLinks(fromKey))) throw new ApiError(424, 'JIRA_REJECTED', `${fromKey} → ${toKey} 링크의 방향을 맞추지 못했습니다.`);
+          }
+          verified = true;
+        }
+        store.recordJiraDependencyLink(projectId, edge.from, edge.to, fromKey, toKey);
+        store.recordJiraOperation({ projectId, kind: 'link', fromTaskId: edge.from, toTaskId: edge.to, state: 'ok', issueKey: `${fromKey}>${toKey}`, userId: actor.user.id });
+        results.push({ ...base, state: 'created', detail: null });
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error;
+        store.recordJiraOperation({ projectId, kind: 'link', fromTaskId: edge.from, toTaskId: edge.to, state: 'failed', detail: error.message, userId: actor.user.id });
+        results.push({ ...base, state: 'failed', detail: error.message });
+      }
+    }
+    return results;
+  }
+
+  /** 공정들로 Jira 이슈를 만든다. dryRun이면 만들지 않고 무엇을 할지만 돌려준다 */
+  async function createIssues(actor: Actor, projectId: string, body: Record<string, unknown>): Promise<JiraCreateResultDto> {
+    const settings = requireSettings(projectId);
+    const client = clientFor(actor);
+    const dryRun = body.dryRun === true;
+    const withLinks = body.createLinks !== false;
+    if (!Array.isArray(body.items) || body.items.length === 0) throw invalidInput('만들 공정(items)을 하나 이상 고르세요.');
+    if (body.items.length > MAX_CREATE) throw invalidInput(`한 번에 ${MAX_CREATE}개까지 만들 수 있습니다.`);
+    const graph = store.getGraph(projectId);
+    const byId = new Map(graph.tasks.map((task) => [task.id, task]));
+    const metaCache = new Map<string, JiraCreateMetaDto>();
+    const previous = store.lastJiraIssueOperations(projectId);
+    const reporter = sql.getToken.get(actor.user.id)?.jira_name ?? null;
+    const results: JiraCreateItemResult[] = [];
+    const plans: { task: TaskDto; meta: JiraCreateMetaDto; values: Record<string, unknown>; raw: Record<string, unknown>; index: number }[] = [];
+    const seen = new Set<string>();
+
+    for (const item of body.items as Record<string, unknown>[]) {
+      const taskId = typeof item?.taskId === 'string' ? item.taskId : '';
+      const task = byId.get(taskId);
+      const result: JiraCreateItemResult = { taskId, title: task?.title ?? '', state: 'failed', issueKey: null, issueTypeName: null, detail: null };
+      results.push(result);
+      if (!task) {
+        result.detail = `이 프로젝트의 공정이 아닙니다: ${taskId}`;
+        continue;
+      }
+      if (seen.has(taskId)) {
+        result.state = 'skipped';
+        result.detail = '같은 공정을 두 번 골랐습니다.';
+        continue;
+      }
+      seen.add(taskId);
+      if (task.jira) {
+        Object.assign(result, { state: 'skipped', issueKey: task.jira.key, detail: `이미 ${task.jira.key}에 연결돼 있습니다.` });
+        continue;
+      }
+      if (task.jiraUrl) {
+        Object.assign(result, { state: 'skipped', detail: '다른 Jira 주소가 연결돼 있습니다. 먼저 연결을 지우세요.' });
+        continue;
+      }
+      let meta: JiraCreateMetaDto;
+      try {
+        meta = await createMeta(actor, projectId, item.issueTypeId, client, metaCache);
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error;
+        result.detail = error.message;
+        continue;
+      }
+      result.issueTypeName = meta.issueTypes.find((type) => type.id === meta.issueTypeId)?.name ?? null;
+      if (meta.unsupported.length > 0) {
+        result.detail = `Tevro가 채울 수 없는 필수 필드가 있어 이 유형으로는 만들 수 없습니다: ${meta.unsupported.join(', ')}`;
+        continue;
+      }
+      const given = (typeof item.fields === 'object' && item.fields !== null ? item.fields : {}) as Record<string, unknown>;
+      const values: Record<string, unknown> = {};
+      const raw: Record<string, unknown> = {};
+      const problems: string[] = [];
+      for (const field of meta.fields) {
+        const input = given[field.id] !== undefined ? given[field.id] : field.default;
+        const converted = convert(field, input);
+        if ('missing' in converted) problems.push(`${field.name}: 값을 넣으세요.`);
+        else if ('error' in converted) problems.push(converted.error);
+        else {
+          values[field.id] = converted.ok;
+          raw[field.id] = input;
+        }
+      }
+      if (problems.length > 0) {
+        result.detail = problems.join(' ');
+        continue;
+      }
+      result.state = 'will-create';
+      plans.push({ task, meta, values, raw, index: results.length - 1 });
+    }
+
+    if (!dryRun) {
+      const preferredFor = (status: TaskStatus) => settings.statusMap[status];
+      const queue = [...plans];
+      const worker = async () => {
+        for (let plan = queue.shift(); plan; plan = queue.shift()) {
+          const result = results[plan.index];
+          const { task, meta } = plan;
+          try {
+            // 지난번에 응답을 받지 못한 공정이면, 먼저 그때 만들어졌는지 찾는다(중복 생성 방지).
+            if (previous.get(task.id)?.state === 'unknown') {
+              const found = await client.findRecentlyCreated(settings.projectKey, task.title);
+              if (found.length === 1) {
+                store.linkJiraIssue(task.id, browseUrl(site!, found[0]));
+                store.recordJiraOperation({ projectId, kind: 'issue', taskId: task.id, state: 'ok', issueKey: found[0], detail: '지난 생성 결과를 찾아 연결', userId: actor.user.id });
+                await refreshAfterCreate(actor, projectId, client, found[0]);
+                Object.assign(result, { state: 'recovered', issueKey: found[0], detail: '지난번에 응답을 받지 못한 생성을 Jira에서 찾아 연결했습니다.' });
+                continue;
+              }
+              if (found.length > 1) {
+                Object.assign(result, { state: 'failed', detail: `같은 제목의 이슈가 ${found.length}개 있습니다(${found.join(', ')}). Jira에서 확인한 뒤 맞는 이슈를 직접 연결하세요.` });
+                continue;
+              }
+            }
+            const fields: Record<string, unknown> = {
+              project: { key: settings.projectKey },
+              issuetype: { id: meta.issueTypeId },
+              summary: task.title.slice(0, 255),
+              ...plan.values,
+            };
+            if (meta.fills.description && task.description.trim()) fields.description = task.description;
+            if (meta.fills.duedate && task.deadline) fields.duedate = task.deadline;
+            if (meta.fills.reporter && reporter) fields.reporter = { name: reporter };
+            if (meta.fills.assignee && task.assigneeId) {
+              const jiraName = sql.userJiraName.get(task.assigneeId)?.jira_name;
+              if (jiraName) fields.assignee = { name: jiraName };
+            }
+            const created = await withRetry(() => client.createIssue(fields));
+            store.linkJiraIssue(task.id, browseUrl(site!, created.key));
+            store.recordJiraOperation({ projectId, kind: 'issue', taskId: task.id, state: 'ok', issueKey: created.key, userId: actor.user.id });
+            Object.assign(result, { state: 'created', issueKey: created.key, detail: null });
+            // 이미 진행 중이거나 완료인 공정은 Jira 상태도 맞춘다. 못 맞추면 Jira 상태(첫 상태)를 따른다는 점을 알린다.
+            if (task.status !== 'todo') {
+              try {
+                await moveTo(client, created.key, task.status, preferredFor(task.status) ?? (await defaultStatusFor(client, created.key, task.status)));
+              } catch (error) {
+                if (!(error instanceof ApiError)) throw error;
+                result.detail = `이슈는 만들었지만 Jira 상태를 옮기지 못해 Tevro 상태도 Jira에 맞춰집니다: ${error.message}`;
+              }
+            }
+            await refreshAfterCreate(actor, projectId, client, created.key);
+          } catch (error) {
+            if (!(error instanceof ApiError)) throw error;
+            const unknown = error.code === 'JIRA_UNAVAILABLE' && error.extra.timeout === true;
+            store.recordJiraOperation({ projectId, kind: 'issue', taskId: task.id, state: unknown ? 'unknown' : 'failed', detail: error.message, userId: actor.user.id });
+            Object.assign(result, {
+              state: unknown ? 'unknown' : 'failed',
+              detail: unknown ? `${error.message} 이슈가 만들어졌는지 모릅니다. 다시 시도하면 먼저 Jira에서 찾아봅니다.` : error.message,
+            });
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CREATE_CONCURRENCY, plans.length) }, worker));
+      // 이번에 쓴 필수 필드 값을 다음 기본값으로 남긴다(이슈 유형별)
+      const defaults = { ...settings.fieldDefaults };
+      for (const plan of plans) if (results[plan.index].state === 'created') defaults[plan.meta.issueTypeId] = { ...(defaults[plan.meta.issueTypeId] ?? {}), ...plan.raw };
+      store.saveJiraProjectSettings(projectId, { fieldDefaults: defaults });
+    }
+
+    const after = dryRun ? previewGraph(graph, plans.map((plan) => plan.task.id)) : store.getGraph(projectId);
+    const links = withLinks ? await syncLinks(actor, projectId, client, dryRun, after) : [];
+    return { dryRun, projectKey: settings.projectKey, items: results, links, ...(dryRun ? {} : { graph: store.getGraph(projectId) }) };
+  }
+
+  /** 미리 보기: 만들 공정에 가짜 키를 붙여 링크 계획을 세운다 */
+  function previewGraph(graph: GraphDto, willCreate: string[]): GraphDto {
+    const planned = new Set(willCreate);
+    return {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        planned.has(task.id) && !task.jira
+          ? { ...task, jira: { key: `(새 이슈: ${task.title})`, url: '', statusName: null, statusCategory: null, summary: null, assigneeName: null, assigneeUnmapped: false, fetchedAt: null, fetchedBy: null, error: null } }
+          : task,
+      ),
+    };
+  }
+
+  async function refreshAfterCreate(actor: Actor, projectId: string, client: JiraClient, key: string): Promise<void> {
+    try {
+      store.applyJira(projectId, [await client.issue(key)], actor.user.displayName);
+    } catch (error) {
+      if (error instanceof ApiError) store.applyJira(projectId, [{ key, error: error.message }], actor.user.displayName);
+    }
+  }
+
+  /** Jira가 잠시 받지 않으면(429·503, Retry-After 10초 이내) 한 번만 기다렸다가 다시 한다 */
+  async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      const wait = error instanceof ApiError && error.code === 'JIRA_UNAVAILABLE' ? Number(error.extra.retryAfter) : NaN;
+      if (!Number.isFinite(wait) || wait > 10) throw error;
+      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+      return fn();
+    }
+  }
+
   return {
     enabled: site !== null,
+
+    createMeta: (actor: Actor, projectId: string, issueTypeId: unknown) => createMeta(actor, projectId, issueTypeId),
+    createIssues,
+    /** 선후관계만 Jira 링크로 다시 반영한다 */
+    async syncLinks(actor: Actor, projectId: string, dryRun: boolean): Promise<JiraLinkResult[]> {
+      return syncLinks(actor, projectId, clientFor(actor), dryRun, store.getGraph(projectId));
+    },
     site,
 
     tokenStatus(actor: Actor): JiraTokenStatusDto {
@@ -427,3 +792,12 @@ export function createJiraService({ db, store, site, box, boxProblem, client: cl
 }
 
 export type { LinkedTask };
+
+/** Jira가 주는 기본값을 Tevro 만들기 창의 값 모양으로 */
+function normalizeDefault(type: JiraCreateFieldDto['type'], value: unknown): unknown {
+  if (value === undefined || value === null) return null;
+  if (type === 'number') return Number.isFinite(Number(value)) ? Number(value) : null;
+  if (type === 'option') return typeof value === 'object' ? String((value as { id?: unknown }).id ?? '') || null : String(value);
+  if (type === 'options') return Array.isArray(value) ? value.map((item) => String(typeof item === 'object' && item !== null ? (item as { id?: unknown }).id : item)) : null;
+  return String(value);
+}

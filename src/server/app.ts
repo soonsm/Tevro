@@ -438,6 +438,20 @@ function jiraRoutes(jira: JiraService, edit: (r: Request, projectId: string) => 
       await jira.saveSettings(r.actor!, r.params.projectId, r.body);
       return { body: r.store.getGraph(r.params.projectId).jira };
     }),
+    // 이슈 만들기(ADR-0009 §3): 필수 필드 묻기, 미리 보기(dryRun), 만들기, 선후관계 링크
+    route('GET', '/api/v1/projects/:projectId/jira/create-meta', 'own', async (r) => {
+      edit(r, r.params.projectId);
+      return { body: await jira.createMeta(r.actor!, r.params.projectId, r.query.get('issueTypeId') ?? undefined) };
+    }),
+    route('POST', '/api/v1/projects/:projectId/jira/issues', 'own', async (r) => {
+      edit(r, r.params.projectId);
+      const result = await jira.createIssues(r.actor!, r.params.projectId, r.body);
+      return { status: result.dryRun ? 200 : 201, body: result };
+    }),
+    route('POST', '/api/v1/projects/:projectId/jira/links', 'own', async (r) => {
+      edit(r, r.params.projectId);
+      return { body: { links: await jira.syncLinks(r.actor!, r.params.projectId, r.body.dryRun === true), graph: r.store.getGraph(r.params.projectId) } };
+    }),
     route('POST', '/api/v1/projects/:projectId/jira/refresh', 'read', async (r) => {
       r.store.getProject(r.params.projectId);
       guardGraph(r.store, r.actor, r.params.projectId, 'read');
