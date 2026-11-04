@@ -93,7 +93,7 @@ interface Props {
 
 // 기한이나 담당자가 있는 카드는 그 줄만큼 높다.
 const META_HEIGHT = 20;
-const hasMeta = (task: TaskDto) => task.deadline !== null || task.assigneeId !== null;
+const hasMeta = (task: TaskDto) => task.deadline !== null || task.assigneeId !== null || Boolean(task.jira?.assigneeUnmapped);
 const nodeHeight = (task: TaskDto) => (task.childCount > 0 ? PARENT_NODE_HEIGHT : NODE_HEIGHT) + (hasMeta(task) ? META_HEIGHT : 0);
 
 export function GraphCanvas({ graph, levelId, selection, cycle, layoutRequest, onSelect, onOpen, onConnect, onDeleteEdge, readOnly = false, onMoveNodes }: Props) {
@@ -283,7 +283,16 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
         {(task.jiraUrl || task.confluenceUrl) && (
           <span className="task-node__links">
             {task.confluenceUrl && <DocIcon label="Confluence 문서 있음" />}
-            {task.jiraUrl && <span>{task.jiraKey ?? 'Jira'}</span>}
+            {task.jiraUrl &&
+              (task.jira ? (
+                <span className="task-node__jira" title={`Jira ${task.jira.key}${task.jira.statusName ? ` · ${task.jira.statusName}` : ''}${task.jira.error ? ` · 조회 실패: ${task.jira.error}` : ''}`}>
+                  {task.jira.key}
+                  {task.jira.statusName && <span className={`task-node__jira-status is-${task.jira.statusCategory ?? 'unknown'}`}>{task.jira.statusName}</span>}
+                  {task.jira.error && <span className="task-node__jira-error">!</span>}
+                </span>
+              ) : (
+                <span>{task.jiraKey ?? 'Jira'}</span>
+              ))}
           </span>
         )}
       </div>
@@ -298,6 +307,11 @@ const TaskNode = memo(function TaskNode({ data: { task } }: NodeProps<TaskNodeTy
             </span>
           )}
           {task.assigneeName && <span className="task-node__assignee">{task.assigneeName}</span>}
+          {!task.assigneeName && task.jira?.assigneeUnmapped && (
+            <span className="task-node__assignee is-external" title="Jira 담당자(Tevro 사용자와 짝 없음)">
+              {task.jira.assigneeName}
+            </span>
+          )}
         </div>
       )}
       {parent && (

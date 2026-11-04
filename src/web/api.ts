@@ -18,11 +18,19 @@ import type {
   TokenScope,
   TrialStatus,
   UserDto,
+  JiraCreateMetaDto,
+  JiraCreateResultDto,
+  JiraLinkResult,
+  JiraTokenStatusDto,
+  ProjectJiraDto,
+  JiraIssueType,
+  JiraStatusOption,
+  JiraLinkTypeOption,
 } from '../shared/types.ts';
 
 /** 서버가 거부했거나 서버에 닿지 못한 요청. 서버 오류면 problem에 서버 응답이 그대로 들어 있다. */
 export class ApiFailure extends Error {
-  readonly problem: Pick<Problem, 'status' | 'detail' | 'cycle'> & { code: string };
+  readonly problem: Pick<Problem, 'status' | 'detail' | 'cycle' | 'jira'> & { code: string };
 
   constructor(problem: ApiFailure['problem']) {
     super(problem.detail);
@@ -130,6 +138,32 @@ export const api = {
       `/api/v1/projects/${id(projectId)}/dependencies?${new URLSearchParams({ from, to })}`,
     ),
   authConfig: () => request<AuthConfigDto>('GET', '/api/v1/auth/config'),
+  // Jira 연동(ADR-0009)
+  jiraToken: () => request<JiraTokenStatusDto>('GET', '/api/v1/jira/token'),
+  setJiraToken: (token: string) => request<JiraTokenStatusDto>('PUT', '/api/v1/jira/token', { token }),
+  deleteJiraToken: () => request<JiraTokenStatusDto>('DELETE', '/api/v1/jira/token'),
+  searchJiraUsers: (query: string) =>
+    request<{ name: string; displayName: string; emailAddress: string | null }[]>('GET', `/api/v1/jira/users?${new URLSearchParams({ q: query })}`),
+  setUserJiraName: (userId: string, jiraName: string | null) => request<UserDto>('PATCH', `/api/v1/users/${id(userId)}`, { jiraName }),
+  jiraOptions: (projectId: string, projectKey: string) =>
+    request<{
+      projectKey: string;
+      issueTypes: JiraIssueType[];
+      statuses: JiraStatusOption[];
+      linkTypes: JiraLinkTypeOption[];
+      suggested: { statusMap: ProjectJiraDto['statusMap']; linkType: string | null; issueTypeId: string | null };
+    }>('GET', `/api/v1/projects/${id(projectId)}/jira/options?${new URLSearchParams({ projectKey })}`),
+  saveJiraSettings: (projectId: string, input: Partial<Pick<ProjectJiraDto, 'projectKey' | 'issueTypeId' | 'statusMap' | 'linkType'>>) =>
+    request<ProjectJiraDto>('PUT', `/api/v1/projects/${id(projectId)}/jira`, input),
+  refreshJira: (projectId: string) => request<GraphDto>('POST', `/api/v1/projects/${id(projectId)}/jira/refresh`),
+  jiraCreateMeta: (projectId: string, issueTypeId?: string) =>
+    request<JiraCreateMetaDto>('GET', `/api/v1/projects/${id(projectId)}/jira/create-meta${issueTypeId ? `?${new URLSearchParams({ issueTypeId })}` : ''}`),
+  createJiraIssues: (
+    projectId: string,
+    body: { items: { taskId: string; issueTypeId?: string; fields?: Record<string, unknown> }[]; createLinks?: boolean; dryRun?: boolean },
+  ) => request<JiraCreateResultDto>('POST', `/api/v1/projects/${id(projectId)}/jira/issues`, body),
+  syncJiraLinks: (projectId: string, dryRun = false) =>
+    request<{ links: JiraLinkResult[]; graph: GraphDto }>('POST', `/api/v1/projects/${id(projectId)}/jira/links`, { dryRun }),
   /** 로그인한 사람. 로그인하지 않았으면 UNAUTHENTICATED로 실패한다 */
   me: () => session(request<MeDto>('GET', '/api/v1/auth/me')),
   login: (username: string, password: string) =>

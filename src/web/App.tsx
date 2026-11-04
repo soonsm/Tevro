@@ -1,11 +1,12 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { STATUS_LABELS, TRANSITION_LABELS, isOverdue, localToday, type Edge, type Summary } from '../shared/domain.ts';
-import type { AutoTransition, GraphDto, PersonDto, ProjectDto, TaskDto, TaskInput, TemplateSummaryDto, TrialStatus, UserDto } from '../shared/types.ts';
+import type { AutoTransition, GraphDto, JiraValuesDto, PersonDto, ProjectDto, TaskDto, TaskInput, TemplateSummaryDto, TrialStatus, UserDto } from '../shared/types.ts';
 import { AccountMenu, LoginScreen, SetupScreen } from './account.tsx';
 import { ApiFailure, api, whenSessionEnds } from './api.ts';
 import { DeleteTaskDialog, MoveTaskDialog, SwitchDatasetDialog } from './dialogs.tsx';
 import { GraphCanvas } from './GraphCanvas.tsx';
+import { JiraChangedDialog, JiraCreateDialog, JiraSettingsDialog, JiraStrip } from './jira.tsx';
 import { AlertIcon, CloseIcon, InfoIcon, LayoutIcon, PlusIcon, RefreshIcon, StatusChip } from './icons.tsx';
 import { LevelBar } from './LevelBar.tsx';
 import { SidePanel } from './SidePanel.tsx';
@@ -32,6 +33,9 @@ type Dialog =
   | { kind: 'delete-task'; task: TaskDto }
   | { kind: 'move-task'; task: TaskDto }
   | { kind: 'switch-dataset'; dataset: string; label: string }
+  | { kind: 'jira-settings' }
+  | { kind: 'jira-create'; taskIds?: string[] }
+  | { kind: 'jira-changed'; task: TaskDto; input: TaskInput; values: JiraValuesDto; detail: string }
   | null;
 
 function transitionText(transitions: AutoTransition[]): string {
@@ -131,6 +135,7 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
   const [layoutRequest, setLayoutRequest] = useState(0);
   /** 체험 서버일 때만 있다 */
   const [trial, setTrial] = useState<TrialStatus | null>(null);
+  const [jiraBusy, setJiraBusy] = useState(false);
   const currentProject = useRef<string | null>(null);
   // 주소의 층(?level=)은 처음 연 프로젝트에만 쓴다.
   const initialLevel = useRef(new URLSearchParams(location.search).get('level'));
@@ -151,6 +156,16 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
     initialLevel.current = null;
     void reloadGraph();
   }, [projectId]);
+
+  // Jira에 연결된 프로젝트는 화면을 열어 두는 동안 5분마다 다시 읽는다(탭이 보일 때만). 서버가 5분 기준으로 Jira를 부른다(ADR-0009).
+  const jiraEnabled = graph?.jira.enabled === true && graph.tasks.some((task) => task.jira);
+  useEffect(() => {
+    if (!jiraEnabled) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible' && !dialog) void reloadGraph();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [jiraEnabled, dialog]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -257,8 +272,38 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
   }
 
   async function updateTask(taskId: string, input: TaskInput) {
-    const result = await mutate('저장하지 않았습니다', () => api.updateTask(taskId, input));
-    if (result) reportTransitions(result.autoTransitions);
+    try {
+      const result = await api.updateTask(taskId, input);
+      setNotice(null);
+      reportTransitions(result.autoTransitions);
+    } catch (error) {
+      // Jira에서 값이 바뀌었거나 연결할 이슈의 값이 다르면 확인을 받고 다시 보낸다(ADR-0009).
+      const task = graph?.tasks.find((item) => item.id === taskId);
+      if (error instanceof ApiFailure && error.problem.code === 'JIRA_CHANGED' && error.problem.jira && task) {
+        setDialog({ kind: 'jira-changed', task, input, values: error.problem.jira, detail: error.problem.detail });
+      } else {
+        showError('저장하지 않았습니다', error);
+      }
+    } finally {
+      await reloadGraph();
+    }
+  }
+
+  /** Jira에서 지금 가져온다(5분을 기다리지 않고) */
+  async function refreshJira() {
+    const id = currentProject.current;
+    if (!id) return;
+    setJiraBusy(true);
+    try {
+      const next = await api.refreshJira(id);
+      if (currentProject.current === id) setGraph(next);
+      setNotice(null);
+    } catch (error) {
+      showError('Jira에서 가져오지 못했습니다', error);
+      await reloadGraph();
+    } finally {
+      setJiraBusy(false);
+    }
   }
 
   async function moveTask(task: TaskDto, parentId: string | null, removeDependencies: Edge[]) {
@@ -559,6 +604,17 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
             onDelete={() => setDialog({ kind: 'delete-template', template: currentTemplate })}
           />
         )}
+        {graph.jira.enabled && graph.project.kind === 'project' && (
+          <JiraStrip
+            jira={graph.jira}
+            linkedCount={graph.tasks.filter((task) => task.jira).length}
+            canEdit={!graphReadOnly}
+            busy={jiraBusy}
+            onRefresh={() => void refreshJira()}
+            onSettings={() => setDialog({ kind: 'jira-settings' })}
+            onCreate={() => setDialog({ kind: 'jira-create' })}
+          />
+        )}
         <div className="workspace">
           <main className="canvas-column">
             <Toolbar
@@ -619,6 +675,9 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
             readOnly={graphReadOnly}
             people={people}
             meId={user?.id ?? null}
+            onCreateJira={
+              graph.jira.enabled && graph.jira.projectKey && !graphReadOnly ? (taskId) => setDialog({ kind: 'jira-create', taskIds: [taskId] }) : undefined
+            }
           />
         </div>
         </>
@@ -706,6 +765,45 @@ function Workspace({ user, onLogout }: { user: UserDto | null; onLogout?: () => 
           graph={graph}
           onCancel={() => setDialog(null)}
           onConfirm={() => void deleteTask(dialog.task)}
+        />
+      )}
+      {dialog?.kind === 'jira-settings' && graph && (
+        <JiraSettingsDialog
+          projectId={graph.project.id}
+          current={graph.jira}
+          onClose={() => setDialog(null)}
+          onSaved={() => {
+            setDialog(null);
+            setNotice({ tone: 'info', heading: 'Jira 설정을 저장했습니다', detail: '' });
+            void reloadGraph();
+          }}
+        />
+      )}
+      {dialog?.kind === 'jira-create' && graph && (
+        <JiraCreateDialog
+          projectId={graph.project.id}
+          graph={graph}
+          initialTaskIds={dialog.taskIds}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            setDialog(null);
+            void reloadGraph();
+          }}
+        />
+      )}
+      {dialog?.kind === 'jira-changed' && (
+        <JiraChangedDialog
+          task={dialog.task}
+          input={dialog.input}
+          values={dialog.values}
+          detail={dialog.detail}
+          people={people}
+          onCancel={() => setDialog(null)}
+          onConfirm={() => {
+            const { task, input } = dialog;
+            setDialog(null);
+            void updateTask(task.id, { ...input, jiraConfirm: true });
+          }}
         />
       )}
       {dialog?.kind === 'move-task' && graph && (

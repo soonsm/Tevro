@@ -143,6 +143,8 @@ export interface TaskInput {
   assigneeId?: string | null;
   /** 만들 때만 받는다. null이나 생략이면 최상위 */
   parentId?: string | null;
+  /** Jira 값과 달라 JIRA_CHANGED를 받은 뒤, 확인하고 다시 보낼 때 true */
+  jiraConfirm?: boolean;
 }
 
 /** 상위 공정 바꾸기. 하위 공정도 함께 옮겨진다. */
@@ -301,6 +303,24 @@ export interface ProjectJiraDto {
   lastRefreshAt: string | null;
   lastRefreshBy: string | null;
   lastRefreshError: string | null;
+}
+
+/** 프로젝트 연결 설정 화면에 쓰는 Jira 정보 */
+export interface JiraIssueType {
+  id: string;
+  name: string;
+  subtask: boolean;
+}
+export interface JiraStatusOption {
+  id: string;
+  name: string;
+  category: JiraStatusCategory | null;
+}
+export interface JiraLinkTypeOption {
+  id: string;
+  name: string;
+  inward: string;
+  outward: string;
 }
 
 /** 이슈를 만들 때 Tevro가 채우지 못해 사람에게 묻는 Jira 필수 필드(사이트마다 다르다) */

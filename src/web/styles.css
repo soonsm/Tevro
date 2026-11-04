@@ -1953,3 +1953,307 @@ textarea.input {
 .input.setup-code::placeholder {
   text-transform: none;
 }
+
+/* ── Jira 연동(ADR-0009) ── */
+.jira-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 7px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.jira-strip.has-error {
+  background: var(--warn-bg);
+}
+
+.jira-strip__label {
+  font-weight: 700;
+  color: var(--doing-fg);
+}
+
+.jira-strip__project {
+  font-weight: 700;
+}
+
+.jira-strip__meta {
+  color: var(--muted);
+}
+
+.jira-strip__error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--warn-fg);
+}
+
+.jira-strip__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.jira-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--doing-fg);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.jira-box.has-error {
+  border-left-color: var(--warn-fg);
+}
+
+.jira-box__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.jira-box__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  color: var(--doing-fg);
+  text-decoration: none;
+}
+
+.jira-box__summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.chip.jira-status {
+  font-size: 11.5px;
+}
+
+.chip.jira-status.is-new {
+  background: var(--todo-bg);
+  color: var(--todo-fg);
+}
+
+.chip.jira-status.is-indeterminate {
+  background: var(--doing-bg);
+  color: var(--doing-fg);
+}
+
+.chip.jira-status.is-done {
+  background: var(--done-bg);
+  color: var(--done-fg);
+}
+
+.chip.jira-status.is-unknown {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.button.jira-create-one {
+  align-self: flex-start;
+  margin-bottom: 12px;
+}
+
+.task-node__jira {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.task-node__jira-status {
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  background: var(--todo-bg);
+  color: var(--todo-fg);
+}
+
+.task-node__jira-status.is-indeterminate {
+  background: var(--doing-bg);
+  color: var(--doing-fg);
+}
+
+.task-node__jira-status.is-done {
+  background: var(--done-bg);
+  color: var(--done-fg);
+}
+
+.task-node__jira-error {
+  color: var(--warn-fg);
+  font-weight: 700;
+}
+
+.task-node__assignee.is-external {
+  font-style: italic;
+}
+
+.jira-token-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.jira-key-row,
+.modal form.jira-key-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.new-user .jira-key-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.jira-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.jira-status-map {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.jira-status-map__row {
+  display: grid;
+  grid-template-columns: 64px 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.jira-create-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.jira-create-toolbar .select {
+  width: auto;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.jira-create-table {
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.jira-create-table table,
+.jira-compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.jira-create-table th,
+.jira-create-table td,
+.jira-compare th,
+.jira-compare td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.jira-create-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.jira-create-table tr.is-off td {
+  color: var(--muted);
+}
+
+.select.small,
+.input.small {
+  height: 28px;
+  padding: 2px 6px;
+  font-size: 12.5px;
+}
+
+.input.small.is-number {
+  width: 80px;
+}
+
+.jira-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.jira-fields__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.jira-fields__label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.jira-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 34vh;
+  overflow: auto;
+}
+
+.jira-result__list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.jira-result__list .is-failed b,
+.jira-result__list .is-unknown b {
+  color: var(--danger);
+}
+
+.jira-result__list .is-created b,
+.jira-result__list .is-recovered b {
+  color: var(--done-fg);
+}
+
+.jira-compare tr.is-diff td {
+  background: var(--warn-bg);
+}
+
+.jira-compare td.is-wanted {
+  font-weight: 700;
+}

@@ -25,6 +25,7 @@ import {
   StatusIcon,
   WarnIcon,
 } from './icons.tsx';
+import { TaskJiraBox } from './jira.tsx';
 import type { Selection } from './App.tsx';
 
 interface Props {
@@ -48,6 +49,8 @@ interface Props {
   people?: PersonDto[];
   /** 로그인한 사람의 ID('내가 맡은 일' 필터). 체험 모드면 null */
   meId?: string | null;
+  /** 이 공정으로 Jira 이슈 만들기(프로젝트에 Jira 설정이 있고 고칠 수 있을 때만) */
+  onCreateJira?: (taskId: string) => void;
 }
 
 export function SidePanel({
@@ -64,6 +67,7 @@ export function SidePanel({
   readOnly = false,
   people = [],
   meId = null,
+  onCreateJira,
 }: Props) {
   const byId = new Map(graph.tasks.map((task) => [task.id, task]));
   const template = graph.project.kind === 'template';
@@ -90,6 +94,7 @@ export function SidePanel({
         readOnly={readOnly}
         template={template}
         people={people}
+        onCreateJira={onCreateJira}
       />
     );
   } else if (selection?.kind === 'edge' && byId.has(selection.from) && byId.has(selection.to)) {
@@ -263,9 +268,10 @@ interface TaskDetailProps {
   /** 템플릿 공정: 진행 상태·선행 충족·Jira 링크·기한·담당자가 없다 */
   template: boolean;
   people: PersonDto[];
+  onCreateJira?: (taskId: string) => void;
 }
 
-function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete, readOnly, template, people }: TaskDetailProps) {
+function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAddChild, onUpdate, onMove, onDelete, readOnly, template, people, onCreateJira }: TaskDetailProps) {
   const update = (input: TaskInput) => onUpdate(task.id, input);
   const path = parentPath(graph.tasks, byId, task.id);
   const children = graph.tasks.filter((item) => item.parentId === task.id).map((item) => item.id);
@@ -287,6 +293,13 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
           </button>
         )}
       </div>
+
+      {task.jira && <TaskJiraBox task={task} />}
+      {!template && !task.jira && !task.jiraUrl && onCreateJira && (
+        <button type="button" className="button small jira-create-one" onClick={() => onCreateJira(task.id)}>
+          이 공정으로 Jira 이슈 만들기
+        </button>
+      )}
 
       {!template && (
         <DeadlineFields task={task} parent={task.parentId ? (byId.get(task.parentId) ?? null) : null} late={lateChildren(graph.tasks, task)} people={people} readOnly={readOnly} onUpdate={update} />
@@ -318,9 +331,10 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
             <p>{INCONSISTENCY_LABELS[task.inconsistency]} 막지는 않으니 필요하면 직접 맞추세요.</p>
           </div>
         )}
-        {task.childCount > 0 && !task.inconsistency && (
+        {task.childCount > 0 && !task.inconsistency && !task.jira && (
           <p className="panel-note is-small">하위 공정이 모두 완료되면 자동으로 완료됩니다. 직접 바꿀 수도 있습니다.</p>
         )}
+        {task.childCount > 0 && task.jira && <p className="panel-note is-small">Jira에 연결된 상위 공정은 하위가 모두 끝나도 자동으로 완료하지 않습니다.</p>}
       </fieldset>
       )}
 
@@ -446,7 +460,9 @@ function TaskDetail({ task, graph, byId, levelId, onFocusTask, onOpenLevel, onAd
         <p className="panel-note is-small">
           {template
             ? 'Confluence 링크는 이 템플릿으로 만든 프로젝트에 그대로 복사됩니다. Jira 이슈는 프로젝트마다 달라 템플릿에는 넣지 않습니다.'
-            : '링크만 저장합니다. Jira 상태는 가져오지 않으며, 실행 상태는 Tevro에서 관리합니다.'}
+            : graph.jira.enabled
+              ? `이 서버의 Jira(${graph.jira.siteUrl}) 이슈 주소를 넣으면 상태·기한·담당자를 Jira와 주고받습니다. 다른 주소는 링크로만 저장합니다.`
+              : '링크만 저장합니다. Jira 상태는 가져오지 않으며, 실행 상태는 Tevro에서 관리합니다.'}
         </p>
       </section>
 

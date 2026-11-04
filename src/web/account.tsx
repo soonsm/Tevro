@@ -5,6 +5,7 @@ import type { CreatedTokenDto, Role, TokenDto, TokenScope, UserDto } from '../sh
 import { ApiFailure, api } from './api.ts';
 import { Modal } from './dialogs.tsx';
 import { CopyIcon, PlusIcon } from './icons.tsx';
+import { JiraTokenDialog } from './jira.tsx';
 
 export const ROLE_LABELS: Record<Role, string> = { viewer: '열람자', editor: '편집자', admin: '관리자' };
 const ROLE_HINTS: Record<Role, string> = {
@@ -189,13 +190,21 @@ export function SetupScreen({ onDone, onLogin }: { onDone: (user: UserDto) => vo
   );
 }
 
-type AccountDialog = 'tokens' | 'password' | 'users' | null;
+type AccountDialog = 'tokens' | 'password' | 'users' | 'jira' | null;
 
 /** 상단 막대 오른쪽의 계정 메뉴 */
 export function AccountMenu({ user, onLogout }: { user: UserDto; onLogout: () => void }) {
   const [open, setOpen] = useState(false);
   const [dialog, setDialog] = useState<AccountDialog>(null);
+  /** 서버에 Jira가 연결돼 있는지(없으면 Jira 메뉴를 숨긴다) */
+  const [jira, setJira] = useState<{ enabled: boolean; connected: boolean } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    api.jiraToken().then(
+      (status) => setJira({ enabled: status.enabled, connected: status.connected }),
+      () => setJira(null),
+    );
+  }, [dialog]);
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent | KeyboardEvent) => {
@@ -229,6 +238,11 @@ export function AccountMenu({ user, onLogout }: { user: UserDto; onLogout: () =>
           <button type="button" role="menuitem" onClick={() => choose('tokens')}>
             내 토큰 (CLI·AI 에이전트용)
           </button>
+          {jira?.enabled && (
+            <button type="button" role="menuitem" onClick={() => choose('jira')}>
+              Jira 연결 {jira.connected ? '(연결됨)' : '(토큰 등록)'}
+            </button>
+          )}
           <button type="button" role="menuitem" onClick={() => choose('password')}>
             비밀번호 바꾸기
           </button>
@@ -248,7 +262,8 @@ export function AccountMenu({ user, onLogout }: { user: UserDto; onLogout: () =>
           <>
             {dialog === 'tokens' && <TokensDialog user={user} onClose={() => setDialog(null)} />}
             {dialog === 'password' && <PasswordDialog onClose={() => setDialog(null)} />}
-            {dialog === 'users' && <UsersDialog me={user} onClose={() => setDialog(null)} />}
+            {dialog === 'users' && <UsersDialog me={user} jira={jira?.enabled === true} onClose={() => setDialog(null)} />}
+            {dialog === 'jira' && <JiraTokenDialog onClose={() => setDialog(null)} />}
           </>,
           document.body,
         )}
@@ -465,13 +480,14 @@ function PasswordDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function UsersDialog({ me, onClose }: { me: UserDto; onClose: () => void }) {
+function UsersDialog({ me, jira, onClose }: { me: UserDto; jira: boolean; onClose: () => void }) {
   const [users, setUsers] = useState<UserDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [resetting, setResetting] = useState<UserDto | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [mapping, setMapping] = useState<UserDto | null>(null);
 
   const load = () => api.listUsers().then(setUsers, (failure) => setError(errorText(failure)));
   useEffect(() => void load(), []);
@@ -493,7 +509,7 @@ function UsersDialog({ me, onClose }: { me: UserDto; onClose: () => void }) {
   const resetPassword = async (event: FormEvent) => {
     event.preventDefault();
     const user = resetting!;
-    if (await run(() => api.resetPassword(user.id, newPassword), `${user.username}의 비밀번호를 바꿨습니다. 잠금도 풀었습니다. 본인에게 따로 알려 주세요.`)) {
+    if (await run(() => api.resetPassword(user.id, newPassword), `${user.username}의 비밀번호를 바꿨습니다. 본인에게 따로 알려 주세요.`)) {
       setResetting(null);
       setNewPassword('');
     }
@@ -522,6 +538,7 @@ function UsersDialog({ me, onClose }: { me: UserDto; onClose: () => void }) {
               <span className="panel-note is-small">
                 {user.username} · 마지막 로그인 {day(user.lastLoginAt)}
                 {!user.active && ' · 비활성'}
+                {jira && ` · Jira ${user.jiraName ?? '짝 없음'}`}
               </span>
             </div>
             <select
@@ -541,6 +558,11 @@ function UsersDialog({ me, onClose }: { me: UserDto; onClose: () => void }) {
             <button type="button" className="button small" onClick={() => setResetting(user)}>
               비밀번호 재설정
             </button>
+            {jira && (
+              <button type="button" className="button small" onClick={() => setMapping(user)}>
+                Jira 짝
+              </button>
+            )}
             <button
               type="button"
               className="button small"
@@ -569,6 +591,15 @@ function UsersDialog({ me, onClose }: { me: UserDto; onClose: () => void }) {
           </div>
         </form>
       )}
+      {mapping && (
+        <JiraMappingForm
+          user={mapping}
+          onCancel={() => setMapping(null)}
+          onSave={async (jiraName) => {
+            if (await run(() => api.setUserJiraName(mapping.id, jiraName), jiraName ? `${mapping.username} ↔ Jira ${jiraName}` : `${mapping.username}의 Jira 짝을 지웠습니다.`)) setMapping(null);
+          }}
+        />
+      )}
       {adding ? (
         <NewUserForm
           onCancel={() => setAdding(false)}
@@ -588,6 +619,62 @@ function UsersDialog({ me, onClose }: { me: UserDto; onClose: () => void }) {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** 관리자: Jira 토큰이 없는 사람의 Jira 사용자를 짝짓는다(담당자를 Jira와 주고받기 위해). 검색은 관리자의 Jira 토큰으로 한다. */
+function JiraMappingForm({ user, onCancel, onSave }: { user: UserDto; onCancel: () => void; onSave: (jiraName: string | null) => void }) {
+  const [query, setQuery] = useState(user.jiraName ?? user.username);
+  const [found, setFound] = useState<{ name: string; displayName: string; emailAddress: string | null }[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const search = async (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    try {
+      setFound(await api.searchJiraUsers(query.trim()));
+    } catch (failure) {
+      setError(errorText(failure));
+    }
+  };
+  return (
+    <form className="new-user" onSubmit={search}>
+      <span className="field-label is-strong">{user.displayName}의 Jira 사용자</span>
+      <p className="panel-note is-small">본인이 Jira 토큰을 등록하면 자동으로 짝지어집니다. 검색은 내 Jira 토큰으로 합니다.</p>
+      <div className="jira-key-row">
+        <input className="input" value={query} placeholder="Jira 아이디나 이름" onChange={(event) => setQuery(event.target.value)} />
+        <button type="submit" className="button" disabled={query.trim().length < 2}>
+          찾기
+        </button>
+      </div>
+      {error && <p className="panel-note is-error">{error}</p>}
+      {found?.length === 0 && <p className="panel-note">찾지 못했습니다.</p>}
+      <ul className="token-list">
+        {found?.map((person) => (
+          <li key={person.name}>
+            <div className="token-list__main">
+              <b>{person.displayName}</b>
+              <span className="panel-note is-small">
+                {person.name}
+                {person.emailAddress ? ` · ${person.emailAddress}` : ''}
+              </span>
+            </div>
+            <button type="button" className="button small" onClick={() => onSave(person.name)}>
+              짝짓기
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="modal__actions">
+        {user.jiraName && (
+          <button type="button" className="button danger" onClick={() => onSave(null)}>
+            짝 지우기
+          </button>
+        )}
+        <button type="button" className="button" onClick={onCancel}>
+          취소
+        </button>
+      </div>
+    </form>
   );
 }
 
