@@ -19,6 +19,9 @@ import {
   type TaskStatus,
 } from '../shared/domain.ts';
 import type {
+  JiraStatusCategory,
+  ProjectJiraDto,
+  TaskJiraDto,
   AutoTransition,
   DeleteTaskResult,
   DependencyDto,
@@ -32,6 +35,7 @@ import type {
 } from '../shared/types.ts';
 import { ApiError, invalidInput } from './errors.ts';
 import { newId } from './ids.ts';
+import { browseUrl, issueKeyOnSite } from './jira.ts';
 
 export type Db = Database.Database;
 export type Store = ReturnType<typeof createStore>;
@@ -44,8 +48,62 @@ type Input = Record<string, unknown>;
  * 3: 사용자·로그인 수단·세션·개인 액세스 토큰(ADR-0004)
  * 4: 템플릿(projects.kind 등)과 프로젝트의 템플릿 출처
  * 5: 공정의 기한·담당자, 저장한 카드 위치
+ * 6: Jira 연동(사람마다의 토큰, 프로젝트 연결 설정, 이슈 조회 결과, 만들기 결과)(ADR-0009)
  */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
+
+// Jira 연동(ADR-0009). 연결된 공정의 상태·기한·담당자는 tasks의 원래 칸에 Jira 값을 그대로 써 두고(선행 조건·지연 판정이 그대로 동작),
+// 마지막 조회 결과 전체는 tasks.jira_snapshot(JSON)에 둔다. 토큰은 서버 비밀키로 암호화한 값만 둔다.
+const JIRA_TABLES = `
+ALTER TABLE users ADD COLUMN jira_name TEXT;
+ALTER TABLE tasks ADD COLUMN jira_snapshot TEXT;
+CREATE TABLE jira_tokens (
+  user_id TEXT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+  sealed TEXT NOT NULL,
+  key_fingerprint TEXT NOT NULL,
+  jira_name TEXT NOT NULL,
+  jira_display_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT
+);
+CREATE TABLE jira_projects (
+  project_id TEXT PRIMARY KEY REFERENCES projects (id) ON DELETE CASCADE,
+  jira_project_key TEXT,
+  issue_type_id TEXT,
+  issue_type_name TEXT,
+  status_map TEXT NOT NULL DEFAULT '{}',
+  link_type TEXT,
+  link_reversed INTEGER NOT NULL DEFAULT 0 CHECK (link_reversed IN (0, 1)),
+  field_defaults TEXT NOT NULL DEFAULT '{}',
+  last_refresh_at TEXT,
+  last_refresh_by TEXT,
+  last_refresh_error TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE jira_operations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('issue', 'link')),
+  task_id TEXT,
+  from_task_id TEXT,
+  to_task_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('ok', 'failed', 'unknown')),
+  issue_key TEXT,
+  detail TEXT,
+  user_id TEXT,
+  at TEXT NOT NULL
+);
+CREATE INDEX jira_operations_by_project ON jira_operations (project_id, at);
+CREATE TABLE jira_dependency_links (
+  project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+  from_task_id TEXT NOT NULL,
+  to_task_id TEXT NOT NULL,
+  from_key TEXT NOT NULL,
+  to_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, from_task_id, to_task_id)
+);
+`;
 
 // 기한은 날짜만(YYYY-MM-DD). 담당자는 Tevro 사용자이고, 사용자를 지우는 일은 없지만 지워지면 담당자만 비운다.
 // 카드 위치는 모두가 같은 위치를 본다. 공정이 지워지면 함께 지워진다. '자동 정렬'은 그 층의 위치를 지운다.
@@ -163,7 +221,7 @@ CREATE TABLE dependencies (
   FOREIGN KEY (project_id, from_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE,
   FOREIGN KEY (project_id, to_task_id) REFERENCES tasks (project_id, id) ON DELETE CASCADE
 );
-${ACCOUNT_TABLES}${TEMPLATE_COLUMNS}${TASK_EXTRAS}`;
+${ACCOUNT_TABLES}${TEMPLATE_COLUMNS}${TASK_EXTRAS}${JIRA_TABLES}`;
 
 /** 예전 DB를 한 단계씩 올리는 SQL. 키는 올린 뒤의 버전이다. 한 번 배포한 단계는 고치지 않고 새 단계를 더한다. */
 const MIGRATIONS: Record<number, string> = {
@@ -194,6 +252,7 @@ CREATE INDEX tasks_by_parent ON tasks (project_id, parent_id);
   3: ACCOUNT_TABLES,
   4: TEMPLATE_COLUMNS,
   5: TASK_EXTRAS,
+  6: JIRA_TABLES,
 };
 
 const MAX_LENGTH = { name: 100, title: 200, description: 10_000, url: 2_000, id: 64 };
@@ -233,8 +292,66 @@ interface TaskRow {
   confluence_url: string | null;
   deadline: string | null;
   assignee_user_id: string | null;
+  jira_snapshot: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** 마지막 Jira 조회 결과(tasks.jira_snapshot). 조회에 실패하면 이전 값을 두고 error만 바꾼다 */
+interface JiraSnapshot {
+  key: string;
+  statusId: string | null;
+  statusName: string | null;
+  category: JiraStatusCategory | null;
+  summary: string | null;
+  duedate: string | null;
+  assignee: { name: string; displayName: string } | null;
+  fetchedAt: string | null;
+  fetchedBy: string | null;
+  error: string | null;
+}
+
+interface JiraProjectRow {
+  project_id: string;
+  jira_project_key: string | null;
+  issue_type_id: string | null;
+  issue_type_name: string | null;
+  status_map: string;
+  link_type: string | null;
+  link_reversed: number;
+  field_defaults: string;
+  last_refresh_at: string | null;
+  last_refresh_by: string | null;
+  last_refresh_error: string | null;
+  updated_at: string;
+}
+
+/** Jira에서 읽은 이슈 하나(조회 결과). error면 이 이슈만 실패 */
+export type JiraFetched =
+  | {
+      key: string;
+      summary: string;
+      status: { id: string; name: string; category: JiraStatusCategory | null };
+      duedate: string | null;
+      assignee: { name: string; displayName: string } | null;
+    }
+  | { key: string; error: string };
+
+/** 연결된 공정 하나(Jira 연동이 다루는 값만) */
+export interface LinkedTask {
+  id: string;
+  key: string;
+  title: string;
+  description: string;
+  parentId: string | null;
+  status: TaskStatus;
+  deadline: string | null;
+  assigneeId: string | null;
+}
+
+/** Jira 상태 분류 → Tevro 상태. 모르는 분류면 null(상태를 바꾸지 않고 '확인 필요'로 보인다) */
+export function statusOfCategory(category: JiraStatusCategory | null): TaskStatus | null {
+  return category === 'new' ? 'todo' : category === 'indeterminate' ? 'in-progress' : category === 'done' ? 'done' : null;
 }
 
 interface DependencyRow {
@@ -296,10 +413,13 @@ function migrate(db: Db, file: string, onMigrated?: (message: string) => void): 
       db.pragma('foreign_keys = ON');
     }
   }
-  onMigrated?.(`데이터 파일을 스키마 ${version}에서 ${SCHEMA_VERSION}로 올렸습니다.${backup ? ` 올리기 전 파일: ${backup}` : ''}`);
+  onMigrated?.(`데이터 파일의 스키마를 ${version}에서 ${SCHEMA_VERSION} 버전으로 올렸습니다.${backup ? ` 올리기 전 파일: ${backup}` : ''}`);
 }
 
-export function createStore(db: Db) {
+export function createStore(db: Db, options: { jiraSite?: string | null } = {}) {
+  const jiraSite = options.jiraSite ?? null;
+  /** 이 서버의 Jira 사이트 이슈에 연결된 공정이면 그 키. 사이트가 없거나 다른 주소면 null(링크로만 둔다) */
+  const linkedKey = (row: { jira_url: string | null }): string | null => (jiraSite && row.jira_url ? issueKeyOnSite(jiraSite, row.jira_url) : null);
   const sql = {
     listProjects: db.prepare<[], ProjectRow>("SELECT * FROM projects WHERE kind = 'project' ORDER BY rowid"),
     getProject: db.prepare<[string], ProjectRow>('SELECT * FROM projects WHERE id = ?'),
@@ -339,7 +459,25 @@ export function createStore(db: Db) {
     ),
     updateTask: db.prepare<[TaskRow]>(
       `UPDATE tasks SET title = @title, description = @description, status = @status, jira_url = @jira_url,
-       confluence_url = @confluence_url, deadline = @deadline, assignee_user_id = @assignee_user_id, updated_at = @updated_at WHERE id = @id`,
+       confluence_url = @confluence_url, deadline = @deadline, assignee_user_id = @assignee_user_id, jira_snapshot = @jira_snapshot,
+       updated_at = @updated_at WHERE id = @id`,
+    ),
+    setJiraValues: db.prepare<[TaskStatus, string | null, string | null, string, string, string]>(
+      'UPDATE tasks SET status = ?, deadline = ?, assignee_user_id = ?, jira_snapshot = ?, updated_at = ? WHERE id = ?',
+    ),
+    setJiraSnapshot: db.prepare<[string, string]>('UPDATE tasks SET jira_snapshot = ? WHERE id = ?'),
+    setJiraUrl: db.prepare<[string, string, string]>('UPDATE tasks SET jira_url = ?, updated_at = ? WHERE id = ?'),
+    jiraUsers: db.prepare<[], { id: string; jira_name: string }>('SELECT id, jira_name FROM users WHERE jira_name IS NOT NULL'),
+    getJiraProject: db.prepare<[string], JiraProjectRow>('SELECT * FROM jira_projects WHERE project_id = ?'),
+    upsertJiraProject: db.prepare<[JiraProjectRow]>(
+      `INSERT INTO jira_projects (project_id, jira_project_key, issue_type_id, issue_type_name, status_map, link_type, link_reversed,
+         field_defaults, last_refresh_at, last_refresh_by, last_refresh_error, updated_at)
+       VALUES (@project_id, @jira_project_key, @issue_type_id, @issue_type_name, @status_map, @link_type, @link_reversed,
+         @field_defaults, @last_refresh_at, @last_refresh_by, @last_refresh_error, @updated_at)
+       ON CONFLICT (project_id) DO UPDATE SET jira_project_key = excluded.jira_project_key, issue_type_id = excluded.issue_type_id,
+         issue_type_name = excluded.issue_type_name, status_map = excluded.status_map, link_type = excluded.link_type,
+         link_reversed = excluded.link_reversed, field_defaults = excluded.field_defaults, last_refresh_at = excluded.last_refresh_at,
+         last_refresh_by = excluded.last_refresh_by, last_refresh_error = excluded.last_refresh_error, updated_at = excluded.updated_at`,
     ),
     people: db.prepare<[], { id: string; username: string; display_name: string }>(
       'SELECT id, username, display_name FROM users WHERE active = 1 ORDER BY display_name COLLATE NOCASE, username',
@@ -445,6 +583,7 @@ export function createStore(db: Db) {
         confluence_url: row.confluence_url,
         deadline: null,
         assignee_user_id: null,
+        jira_snapshot: null,
         created_at: now,
         updated_at: now,
       });
@@ -508,10 +647,80 @@ export function createStore(db: Db) {
     const nameOf = (id: string | null) => (id ? (names.get(id) ?? sql.personName.get(id)?.display_name ?? null) : null);
     return {
       project: dto(project),
-      tasks: rows.map((row) => toTaskDto(row, prerequisites.get(row.id)!, hierarchy.get(row.id)!, nameOf(row.assignee_user_id))),
+      tasks: rows.map((row) => ({
+        ...toTaskDto(row, prerequisites.get(row.id)!, hierarchy.get(row.id)!, nameOf(row.assignee_user_id)),
+        jira: taskJira(row),
+      })),
       dependencies,
       summary: summarize(tasks),
       positions: Object.fromEntries(sql.listPositions.all(project.id).map((row) => [row.task_id, { x: row.x, y: row.y }])),
+      jira: projectJira(project),
+    };
+  }
+
+  function taskJira(row: TaskRow): TaskJiraDto | null {
+    const key = linkedKey(row);
+    if (!key || !jiraSite) return null;
+    const snap = readSnapshot(row);
+    const current = snap && snap.key === key ? snap : null;
+    return {
+      key,
+      url: browseUrl(jiraSite, key),
+      statusName: current?.statusName ?? null,
+      statusCategory: current?.category ?? null,
+      summary: current?.summary ?? null,
+      assigneeName: current?.assignee?.displayName ?? null,
+      assigneeUnmapped: Boolean(current?.assignee) && row.assignee_user_id === null,
+      fetchedAt: current?.fetchedAt ?? null,
+      fetchedBy: current?.fetchedBy ?? null,
+      error: current?.error ?? null,
+    };
+  }
+
+  function projectJira(project: ProjectRow): ProjectJiraDto {
+    const row = project.kind === 'project' && jiraSite ? sql.getJiraProject.get(project.id) : undefined;
+    return {
+      enabled: project.kind === 'project' && jiraSite !== null,
+      siteUrl: project.kind === 'project' ? jiraSite : null,
+      projectKey: row?.jira_project_key ?? null,
+      issueTypeId: row?.issue_type_id ?? null,
+      issueTypeName: row?.issue_type_name ?? null,
+      statusMap: row ? (JSON.parse(row.status_map) as ProjectJiraDto['statusMap']) : {},
+      linkType: row?.link_type ?? null,
+      lastRefreshAt: row?.last_refresh_at ?? null,
+      lastRefreshBy: row?.last_refresh_by ?? null,
+      lastRefreshError: row?.last_refresh_error ?? null,
+    };
+  }
+
+  function readSnapshot(row: TaskRow): JiraSnapshot | null {
+    if (!row.jira_snapshot) return null;
+    try {
+      return JSON.parse(row.jira_snapshot) as JiraSnapshot;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Jira 사용자 name(소문자) → Tevro 사용자 ID */
+  function jiraUserIndex(): Map<string, string> {
+    return new Map(sql.jiraUsers.all().map((row) => [row.jira_name.toLowerCase(), row.id]));
+  }
+
+  function emptyJiraProject(projectId: string): JiraProjectRow {
+    return {
+      project_id: projectId,
+      jira_project_key: null,
+      issue_type_id: null,
+      issue_type_name: null,
+      status_map: '{}',
+      link_type: null,
+      link_reversed: 0,
+      field_defaults: '{}',
+      last_refresh_at: null,
+      last_refresh_by: null,
+      last_refresh_error: null,
+      updated_at: new Date().toISOString(),
     };
   }
 
@@ -540,7 +749,9 @@ export function createStore(db: Db) {
     const rows = sql.listTasks.all(projectId);
     const titles = new Map(rows.map((row) => [row.id, row.title]));
     const now = new Date().toISOString();
-    return autoTransitions(rows.map(toTaskLike), changedParentIds, addedParentIds).map(({ taskId, status, cause }) => {
+    // Jira가 상태 원본인 상위는 자동으로 바꾸지 않고 어긋남으로만 보인다(ADR-0009, PRD F-H05).
+    const locked = new Set(rows.filter((row) => linkedKey(row) !== null).map((row) => row.id));
+    return autoTransitions(rows.map(toTaskLike), changedParentIds, addedParentIds, locked).map(({ taskId, status, cause }) => {
       sql.setStatus.run(status, now, taskId);
       return { taskId, title: titles.get(taskId)!, status, cause };
     });
@@ -680,6 +891,7 @@ export function createStore(db: Db) {
         confluence_url: readLink(input.confluenceUrl, 'Confluence 링크') ?? null,
         deadline: readDeadline(input.deadline) ?? null,
         assignee_user_id: readAssignee(input.assigneeId) ?? null,
+        jira_snapshot: null,
         created_at: now,
         updated_at: now,
       };
@@ -713,6 +925,8 @@ export function createStore(db: Db) {
         confluence_url: confluenceUrl === undefined ? task.confluence_url : confluenceUrl,
         deadline: deadline === undefined ? task.deadline : deadline,
         assignee_user_id: assignee === undefined ? task.assignee_user_id : assignee,
+        // 다른 이슈로 바꾸거나 연결을 끊으면 이전 이슈의 조회 결과는 버린다(해제 뒤 값은 마지막 조회 값으로 남는다).
+        jira_snapshot: jiraUrl === undefined || jiraUrl === task.jira_url ? task.jira_snapshot : null,
         updated_at: new Date().toISOString(),
       });
       touch(task.project_id);
@@ -781,6 +995,159 @@ export function createStore(db: Db) {
         removedDependencies,
         autoTransitions: applyAutoTransitions(task.project_id, [task.parent_id]),
       };
+    }),
+
+    // ── Jira 연동(ADR-0009). 네트워크 호출은 jira 서비스가 하고, 여기서는 DB만 다룬다. ──
+
+    /** 이 서버의 Jira 사이트 이슈에 연결된 공정 */
+    jiraLinkedTasks(projectId: string): LinkedTask[] {
+      return sql.listTasks.all(projectId).flatMap((row) => {
+        const key = linkedKey(row);
+        return key
+          ? [{ id: row.id, key, title: row.title, description: row.description, parentId: row.parent_id, status: row.status, deadline: row.deadline, assigneeId: row.assignee_user_id }]
+          : [];
+      });
+    },
+
+    jiraLinkedTask(taskId: string): LinkedTask | null {
+      const row = requireTask(taskId);
+      const key = linkedKey(row);
+      return key
+        ? { id: row.id, key, title: row.title, description: row.description, parentId: row.parent_id, status: row.status, deadline: row.deadline, assigneeId: row.assignee_user_id }
+        : null;
+    },
+
+    /** Jira 사용자 name → Tevro 사용자 ID(짝이 없으면 없음) */
+    tevroUserOfJira(jiraName: string | null | undefined): string | null {
+      return jiraName ? (jiraUserIndex().get(jiraName.toLowerCase()) ?? null) : null;
+    },
+
+    /**
+     * 조회한 이슈를 연결된 공정에 반영한다. 상태(분류로)·기한·담당자(짝지은 사용자)를 tasks에 쓰고 조회 결과를 남긴다.
+     * 상태가 바뀐 공정의 상위는 자동 전이를 다시 본다. projectRefresh를 주면 프로젝트의 마지막 조회도 남긴다.
+     */
+    applyJira: write(
+      (
+        projectId: string,
+        fetched: JiraFetched[],
+        by: string,
+        projectRefresh?: { error: string | null },
+      ): { changed: string[]; autoTransitions: AutoTransition[] } => {
+        requireProject(projectId);
+        const at = new Date().toISOString();
+        const byKey = new Map(fetched.map((item) => [item.key, item]));
+        const users = jiraUserIndex();
+        const changed: string[] = [];
+        const changedParents: (string | null)[] = [];
+        for (const row of sql.listTasks.all(projectId)) {
+          const key = linkedKey(row);
+          const item = key ? byKey.get(key) : undefined;
+          if (!key || !item) continue;
+          const previous = readSnapshot(row);
+          if ('error' in item) {
+            const snap: JiraSnapshot = previous && previous.key === key
+              ? { ...previous, error: item.error }
+              : { key, statusId: null, statusName: null, category: null, summary: null, duedate: null, assignee: null, fetchedAt: null, fetchedBy: null, error: item.error };
+            sql.setJiraSnapshot.run(JSON.stringify(snap), row.id);
+            continue;
+          }
+          const status = statusOfCategory(item.status.category) ?? row.status;
+          const assignee = item.assignee ? (users.get(item.assignee.name.toLowerCase()) ?? null) : null;
+          const snap: JiraSnapshot = {
+            key,
+            statusId: item.status.id,
+            statusName: item.status.name,
+            category: item.status.category,
+            summary: item.summary,
+            duedate: item.duedate,
+            assignee: item.assignee,
+            fetchedAt: at,
+            fetchedBy: by,
+            error: null,
+          };
+          if (status !== row.status || item.duedate !== row.deadline || assignee !== row.assignee_user_id) {
+            changed.push(row.id);
+            sql.setJiraValues.run(status, item.duedate, assignee, JSON.stringify(snap), at, row.id);
+            if (status !== row.status) changedParents.push(row.parent_id);
+          } else {
+            sql.setJiraSnapshot.run(JSON.stringify(snap), row.id);
+          }
+        }
+        if (projectRefresh) {
+          const current = sql.getJiraProject.get(projectId) ?? emptyJiraProject(projectId);
+          sql.upsertJiraProject.run({ ...current, last_refresh_at: at, last_refresh_by: by, last_refresh_error: projectRefresh.error });
+        }
+        return { changed, autoTransitions: changedParents.length > 0 ? applyAutoTransitions(projectId, changedParents) : [] };
+      },
+    ),
+
+    /** 프로젝트 조회가 통째로 실패했을 때(토큰·접속). 저장된 값은 그대로 두고 이유만 남긴다 */
+    recordJiraRefreshError: write((projectId: string, by: string, error: string): void => {
+      const current = sql.getJiraProject.get(projectId) ?? emptyJiraProject(projectId);
+      sql.upsertJiraProject.run({ ...current, last_refresh_at: new Date().toISOString(), last_refresh_by: by, last_refresh_error: error });
+    }),
+
+    /** 마지막 조회 시각(ms). 없으면 null */
+    jiraLastRefresh(projectId: string): number | null {
+      const at = sql.getJiraProject.get(projectId)?.last_refresh_at;
+      return at ? Date.parse(at) : null;
+    },
+
+    jiraProjectSettings(projectId: string): {
+      projectKey: string | null;
+      issueTypeId: string | null;
+      issueTypeName: string | null;
+      statusMap: ProjectJiraDto['statusMap'];
+      linkType: string | null;
+      linkReversed: boolean;
+      fieldDefaults: Record<string, Record<string, unknown>>;
+    } {
+      const row = sql.getJiraProject.get(projectId);
+      return {
+        projectKey: row?.jira_project_key ?? null,
+        issueTypeId: row?.issue_type_id ?? null,
+        issueTypeName: row?.issue_type_name ?? null,
+        statusMap: row ? JSON.parse(row.status_map) : {},
+        linkType: row?.link_type ?? null,
+        linkReversed: row?.link_reversed === 1,
+        fieldDefaults: row ? JSON.parse(row.field_defaults) : {},
+      };
+    },
+
+    saveJiraProjectSettings: write(
+      (
+        projectId: string,
+        settings: Partial<{
+          projectKey: string | null;
+          issueTypeId: string | null;
+          issueTypeName: string | null;
+          statusMap: ProjectJiraDto['statusMap'];
+          linkType: string | null;
+          linkReversed: boolean;
+          fieldDefaults: Record<string, Record<string, unknown>>;
+        }>,
+      ): void => {
+        const project = requireProject(projectId);
+        if (project.kind !== 'project') throw invalidInput('템플릿에는 Jira를 연결하지 않습니다.');
+        const current = sql.getJiraProject.get(projectId) ?? emptyJiraProject(projectId);
+        sql.upsertJiraProject.run({
+          ...current,
+          jira_project_key: settings.projectKey === undefined ? current.jira_project_key : settings.projectKey,
+          issue_type_id: settings.issueTypeId === undefined ? current.issue_type_id : settings.issueTypeId,
+          issue_type_name: settings.issueTypeName === undefined ? current.issue_type_name : settings.issueTypeName,
+          status_map: settings.statusMap === undefined ? current.status_map : JSON.stringify(settings.statusMap),
+          link_type: settings.linkType === undefined ? current.link_type : settings.linkType,
+          link_reversed: settings.linkReversed === undefined ? current.link_reversed : settings.linkReversed ? 1 : 0,
+          field_defaults: settings.fieldDefaults === undefined ? current.field_defaults : JSON.stringify(settings.fieldDefaults),
+          updated_at: new Date().toISOString(),
+        });
+      },
+    ),
+
+    /** 새로 만든 이슈를 공정에 연결한다(만들기 결과) */
+    linkJiraIssue: write((taskId: string, url: string): void => {
+      requireTask(taskId);
+      sql.setJiraUrl.run(url, new Date().toISOString(), taskId);
     }),
 
     addDependency: write((projectId: string, input: Input): DependencyDto => {
@@ -877,6 +1244,7 @@ function toTaskDto(row: TaskRow, prerequisites: Prerequisites, hierarchy: Hierar
     assigneeName,
     ...prerequisites,
     ...hierarchy,
+    jira: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

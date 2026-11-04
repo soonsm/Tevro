@@ -726,6 +726,7 @@ function levelOf(graph: GraphDto, rootId: string): GraphDto {
   const subtree = new Set(descendantIds(graph.tasks, rootId));
   return {
     project: graph.project,
+    jira: graph.jira,
     tasks,
     dependencies: graph.dependencies.filter((edge) => ids.has(edge.from) && ids.has(edge.to)),
     summary: summarize(graph.tasks.filter((item) => subtree.has(item.id))),

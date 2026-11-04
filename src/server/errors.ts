@@ -14,6 +14,13 @@ const TITLES: Record<ErrorCode, string> = {
   UNAUTHENTICATED: '로그인 필요',
   FORBIDDEN: '권한 없음',
   RATE_LIMITED: '잠시 후 다시 시도',
+  JIRA_NOT_CONFIGURED: 'Jira 연결 안 됨',
+  JIRA_TOKEN_REQUIRED: 'Jira 토큰 필요',
+  JIRA_AUTH: 'Jira 인증·권한 오류',
+  JIRA_UNAVAILABLE: 'Jira 접속 실패',
+  JIRA_REJECTED: 'Jira가 거부함',
+  JIRA_TRANSITION: 'Jira 상태 전환 불가',
+  JIRA_CHANGED: 'Jira에서 바뀜',
   TRIAL_SESSION_REQUIRED: '체험 창 정보 없음',
   INTERNAL: '서버 오류',
 };

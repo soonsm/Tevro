@@ -62,6 +62,7 @@ interface UserRow {
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
+  jira_name?: string | null;
 }
 
 interface IdentityRow {
@@ -453,6 +454,7 @@ function toUserDto(row: UserRow): UserDto {
     active: row.active === 1,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
+    jiraName: row.jira_name ?? null,
   };
 }
 

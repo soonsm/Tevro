@@ -206,6 +206,8 @@ export function autoTransitions(
   tasks: readonly TaskLike[],
   changedParentIds: readonly (string | null | undefined)[],
   addedParentIds: readonly (string | null | undefined)[] = [],
+  /** 상태를 바꾸지 않을 공정(Jira가 상태 원본인 상위). 어긋나면 inconsistency로만 드러난다(ADR-0009) */
+  locked: ReadonlySet<string> = new Set(),
 ): StatusTransition[] {
   const { parentOf, childrenOf } = hierarchyIndex(tasks);
   const statusById = new Map(tasks.map((task) => [task.id, task.status]));
@@ -218,7 +220,7 @@ export function autoTransitions(
   while (queue.length > 0) {
     const { id, startOnly } = queue.shift()!;
     const childStatuses = (childrenOf.get(id) ?? []).map((child) => statusById.get(child));
-    if (childStatuses.length === 0) continue;
+    if (childStatuses.length === 0 || locked.has(id)) continue;
     const current = statusById.get(id);
     let next: StatusTransition | null = null;
     if (!startOnly && current !== 'done' && childStatuses.every((status) => status === 'done')) {

@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import { POLICY, type Accounts, type Actor } from './accounts.ts';
+import type { JiraService } from './jiraService.ts';
 import { ApiError, internalError, invalidInput } from './errors.ts';
 import type { AuthConfigDto, ProjectDto } from '../shared/types.ts';
 import type { Store } from './store.ts';
@@ -84,6 +85,8 @@ interface AppOptions {
   accounts?: Accounts;
   /** 체험 모드: 창마다 예시 데이터의 사본을 쓴다(src/server/trial.ts) */
   trial?: Trial;
+  /** Jira 연동(ADR-0009). 없으면 Jira 경로는 JIRA_NOT_CONFIGURED */
+  jira?: JiraService;
   webRoot?: string;
   /**
    * 앞에 둔 리버스 프록시(Caddy, nginx 등)가 붙인 X-Forwarded-For를 믿을지. 기본은 TEVRO_TRUST_PROXY=1일 때만.
@@ -94,7 +97,7 @@ interface AppOptions {
 }
 
 /** API(/api/v1)와 웹 정적 파일을 함께 제공하는 서버. GUI와 CLI는 같은 API만 쓴다(PRD 원칙 7). */
-export function createApp({ store, accounts, trial, webRoot, trustProxy = process.env.TEVRO_TRUST_PROXY === '1' }: AppOptions): Server {
+export function createApp({ store, accounts, trial, jira, webRoot, trustProxy = process.env.TEVRO_TRUST_PROXY === '1' }: AppOptions): Server {
   if ((store === undefined) === (trial === undefined)) throw new Error('store와 trial 중 하나만 넘깁니다.');
   if (store && !accounts) throw new Error('store를 넘길 때는 accounts도 넘깁니다.');
 
@@ -106,8 +109,10 @@ export function createApp({ store, accounts, trial, webRoot, trustProxy = proces
   const routes: Route[] = [
     route('GET', '/api/v1/projects', 'read', ({ store }) => ({ body: store.listProjects() })),
     route('POST', '/api/v1/projects', 'write', ({ store, body }) => ({ status: 201, body: store.createProject(body) })),
-    route('GET', '/api/v1/projects/:projectId/graph', 'read', (r) => {
+    route('GET', '/api/v1/projects/:projectId/graph', 'read', async (r) => {
       view(r, r.params.projectId);
+      // 마지막 Jira 조회 뒤 5분이 지났으면 읽는 사람의 토큰으로 먼저 가져온다(ADR-0009). 실패해도 저장된 값으로 답한다.
+      await jira?.refreshIfStale(r.actor, r.params.projectId);
       return { body: r.store.getGraph(r.params.projectId) };
     }),
     route('POST', '/api/v1/projects/:projectId/tasks', 'own', (r) => {
@@ -127,13 +132,20 @@ export function createApp({ store, accounts, trial, webRoot, trustProxy = proces
         }),
       };
     }),
-    route('GET', '/api/v1/tasks/:taskId', 'read', (r) => {
-      view(r, r.store.projectIdOfTask(r.params.taskId));
+    route('GET', '/api/v1/tasks/:taskId', 'read', async (r) => {
+      const projectId = r.store.projectIdOfTask(r.params.taskId);
+      view(r, projectId);
+      await jira?.refreshIfStale(r.actor, projectId);
       return { body: r.store.getTask(r.params.taskId) };
     }),
-    route('PATCH', '/api/v1/tasks/:taskId', 'own', (r) => {
+    route('PATCH', '/api/v1/tasks/:taskId', 'own', async (r) => {
       editTask(r, r.params.taskId);
-      return { body: r.store.updateTask(r.params.taskId, r.body) };
+      // Jira에 연결된 공정의 상태·기한·담당자는 Jira에 먼저 반영하고, 성공하면 Tevro에 저장한다(ADR-0009).
+      const after = jira ? await jira.beforeTaskUpdate(r.actor, r.params.taskId, r.body) : null;
+      const result = r.store.updateTask(r.params.taskId, r.body);
+      if (!after) return { body: result };
+      await after();
+      return { body: { ...result, task: r.store.getTask(r.params.taskId) } };
     }),
     route('POST', '/api/v1/tasks/:taskId/move', 'own', (r) => {
       editTask(r, r.params.taskId);
@@ -190,7 +202,8 @@ export function createApp({ store, accounts, trial, webRoot, trustProxy = proces
       return { status: 201, body: r.store.instantiate(r.params.templateId, r.body) };
     }),
   ];
-  if (accounts) routes.push(...accountRoutes(accounts));
+  if (accounts) routes.push(...accountRoutes(accounts, jira));
+  if (accounts && jira) routes.push(...jiraRoutes(jira, edit));
   if (!trial) {
     // 화면이 체험 모드인지 물을 때 콘솔에 404 오류가 남지 않게, 체험 모드가 아니면 내용 없이 답한다.
     routes.push(route('GET', '/api/v1/trial', 'public', () => ({ status: 204, body: undefined })));
@@ -359,7 +372,7 @@ function sendProblem(res: ServerResponse, error: unknown): void {
 }
 
 /** 사용자·로그인·토큰 API. 토큰 발급과 사용자 관리는 웹 세션으로만 한다(에이전트가 토큰으로 새 토큰을 만들지 못하게). */
-function accountRoutes(accounts: Accounts): Route[] {
+function accountRoutes(accounts: Accounts, jira: JiraService | undefined): Route[] {
   return [
     route('GET', '/api/v1/auth/config', 'public', () => ({
       body: { providers: accounts.providers(), setupRequired: accounts.setupRequired() } satisfies AuthConfigDto,
@@ -392,12 +405,45 @@ function accountRoutes(accounts: Accounts): Route[] {
     route('DELETE', '/api/v1/tokens/:tokenId', 'session', ({ actor, params }) => ({ body: accounts.revokeToken(actor!, params.tokenId) })),
     route('GET', '/api/v1/users', 'admin', () => ({ body: accounts.listUsers() })),
     route('POST', '/api/v1/users', 'admin', async ({ body }) => ({ status: 201, body: await accounts.createUser(body) })),
-    route('PATCH', '/api/v1/users/:userId', 'admin', ({ params, body }) => ({ body: accounts.updateUser(params.userId, body) })),
+    route('PATCH', '/api/v1/users/:userId', 'admin', ({ params, body }) => {
+      // Jira 사용자 짝(담당자 주고받기). Jira 연동이 없으면 받지 않는다.
+      const { jiraName, ...rest } = body;
+      if (jiraName !== undefined) {
+        if (!jira?.enabled) throw new ApiError(409, 'JIRA_NOT_CONFIGURED', '이 서버에는 Jira가 연결돼 있지 않습니다.');
+        jira.setUserJiraName(params.userId, jiraName);
+      }
+      return { body: Object.keys(rest).length > 0 || jiraName === undefined ? accounts.updateUser(params.userId, rest) : accounts.getUser(params.userId) };
+    }),
     route('POST', '/api/v1/users/:userId/password', 'admin', async ({ params, body }) => {
       await accounts.setPassword(params.userId, body.password);
       return { status: 204, body: undefined };
     }),
     route('GET', '/api/v1/users/:userId/tokens', 'admin', ({ params }) => ({ body: accounts.listTokens(accounts.getUser(params.userId).id) })),
+  ];
+}
+
+/** Jira 연동 경로(ADR-0009). Jira는 요청한 사람의 토큰으로만 부른다. */
+function jiraRoutes(jira: JiraService, edit: (r: Request, projectId: string) => void): Route[] {
+  return [
+    route('GET', '/api/v1/jira/token', 'read', ({ actor }) => ({ body: jira.tokenStatus(actor!) })),
+    route('PUT', '/api/v1/jira/token', 'own', async ({ actor, body }) => ({ body: await jira.setToken(actor!, body.token) })),
+    route('DELETE', '/api/v1/jira/token', 'own', ({ actor }) => ({ body: jira.deleteToken(actor!) })),
+    route('GET', '/api/v1/jira/users', 'read', async ({ actor, query }) => ({ body: await jira.searchUsers(actor!, query.get('q')) })),
+    route('GET', '/api/v1/projects/:projectId/jira/options', 'own', async (r) => {
+      edit(r, r.params.projectId);
+      return { body: await jira.options(r.actor!, r.query.get('projectKey')) };
+    }),
+    route('PUT', '/api/v1/projects/:projectId/jira', 'write', async (r) => {
+      edit(r, r.params.projectId);
+      await jira.saveSettings(r.actor!, r.params.projectId, r.body);
+      return { body: r.store.getGraph(r.params.projectId).jira };
+    }),
+    route('POST', '/api/v1/projects/:projectId/jira/refresh', 'read', async (r) => {
+      r.store.getProject(r.params.projectId);
+      guardGraph(r.store, r.actor, r.params.projectId, 'read');
+      await jira.refresh(r.actor!, r.params.projectId);
+      return { body: r.store.getGraph(r.params.projectId) };
+    }),
   ];
 }
 

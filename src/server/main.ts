@@ -1,6 +1,8 @@
 import { join, resolve } from 'node:path';
 import { createAccounts } from './accounts.ts';
 import { createApp } from './app.ts';
+import { createJiraService } from './jiraService.ts';
+import { createSecretBox, readSecretKey } from './secrets.ts';
 import { createStore, openDatabase } from './store.ts';
 import { createTrial, loadTemplates } from './trial.ts';
 
@@ -15,7 +17,26 @@ const webRoot = resolve(import.meta.dirname, '../../dist/web');
 const trial = trialMode ? createTrial(loadTemplates(resolve(import.meta.dirname, '../../trial'))) : null;
 const db = trial ? null : openDatabase(databaseFile, (message) => console.log(message));
 const accounts = db ? createAccounts(db) : null;
-const server = trial ? createApp({ trial, webRoot }) : createApp({ store: createStore(db!), accounts: accounts!, webRoot });
+
+// Jira 연동(ADR-0009): TEVRO_JIRA_URL이 있으면 켠다. 사람마다의 Jira 토큰은 TEVRO_SECRET_KEY로 암호화해 저장한다.
+const jiraSite = readJiraUrl(process.env.TEVRO_JIRA_URL);
+const secret = readSecretKey(process.env.TEVRO_SECRET_KEY);
+const box = 'key' in secret ? createSecretBox(secret.key) : null;
+const store = db ? createStore(db, { jiraSite: trial ? null : jiraSite }) : null;
+const jira = db && store && jiraSite ? createJiraService({ db, store, site: jiraSite, box, boxProblem: 'error' in secret ? secret.error : undefined }) : undefined;
+const server = trial ? createApp({ trial, webRoot }) : createApp({ store: store!, accounts: accounts!, jira, webRoot });
+
+function readJiraUrl(value: string | undefined): string | null {
+  if (!value?.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error();
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    console.error(`TEVRO_JIRA_URL이 올바른 주소가 아닙니다: ${value}. Jira 연동을 끕니다.`);
+    return null;
+  }
+}
 
 if (process.env.TEVRO_PASSWORD) {
   console.warn('TEVRO_PASSWORD는 더 이상 쓰지 않습니다. 사용자 계정으로 로그인합니다(README의 \'로그인과 권한\').');
@@ -37,6 +58,9 @@ server.listen(port, host, () => {
     return;
   }
   console.log(`데이터 파일: ${databaseFile}`);
+  if (jiraSite) {
+    console.log(`Jira 연동: ${jiraSite}${box ? '' : ` (토큰 저장 불가: ${'error' in secret ? secret.error : ''} 예: TEVRO_SECRET_KEY=$(openssl rand -base64 32))`}`);
+  }
   const setupCode = accounts!.beginSetup();
   if (setupCode) {
     console.warn(

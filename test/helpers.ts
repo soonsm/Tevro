@@ -1,6 +1,8 @@
 import type { AddressInfo } from 'node:net';
 import { createAccounts, type Accounts } from '../src/server/accounts.ts';
 import { createApp } from '../src/server/app.ts';
+import { createJiraService, type JiraService } from '../src/server/jiraService.ts';
+import { createSecretBox } from '../src/server/secrets.ts';
 import { createStore, openDatabase, type Db } from '../src/server/store.ts';
 import type { Trial } from '../src/server/trial.ts';
 
@@ -8,6 +10,7 @@ export interface TestServer {
   origin: string;
   db: Db;
   accounts: Accounts;
+  jira?: JiraService;
   /** 시험용 관리자(admin)의 read-write 토큰. call은 이 토큰으로 부른다 */
   token: string;
   call: <T = any>(method: string, path: string, body?: unknown) => Promise<{ status: number; data: T }>;
@@ -25,13 +28,24 @@ export const ADMIN_PASSWORD = 'admin password 1';
 export async function startServer(
   databaseFile = ':memory:',
   webRoot?: string,
-  options: { now?: () => number; trustProxy?: boolean } = {},
+  options: { now?: () => number; trustProxy?: boolean; jira?: { site: string; secret?: boolean; timeoutMs?: number } } = {},
 ): Promise<TestServer> {
   const db = openDatabase(databaseFile);
   const accounts = createAccounts(db, { now: options.now });
   const admin = accounts.findUser('admin') ?? (await accounts.createUser({ username: 'admin', role: 'admin', password: ADMIN_PASSWORD }));
   const token = accounts.createToken({ user: admin, via: 'session' }, { name: 'test', scope: 'read-write' }).token;
-  const server = createApp({ store: createStore(db), accounts, webRoot, trustProxy: options.trustProxy ?? false });
+  const store = createStore(db, { jiraSite: options.jira?.site ?? null });
+  const jira = options.jira
+    ? createJiraService({
+        db,
+        store,
+        site: options.jira.site,
+        box: options.jira.secret === false ? null : createSecretBox(Buffer.alloc(32, 7)),
+        boxProblem: 'TEVRO_SECRET_KEY가 없습니다.',
+        client: { timeoutMs: options.jira.timeoutMs ?? 2000 },
+      })
+    : undefined;
+  const server = createApp({ store, accounts, jira, webRoot, trustProxy: options.trustProxy ?? false });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   async function callWith(headers: Record<string, string>, method: string, path: string, body?: unknown) {
@@ -47,6 +61,7 @@ export async function startServer(
     origin,
     db,
     accounts,
+    jira,
     token,
     callWith,
     async call(method, path, body) {

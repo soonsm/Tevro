@@ -75,6 +75,8 @@ export interface TaskDto {
   doneChildCount: number;
   /** 상위·하위 상태 어긋남. 없으면 null */
   inconsistency: Inconsistency | null;
+  /** 이 서버의 Jira 사이트 이슈에 연결돼 있으면 마지막 조회 결과. 상태·기한·담당자는 Jira가 원본이다 */
+  jira: TaskJiraDto | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -89,6 +91,8 @@ export interface GraphDto {
   summary: Summary;
   /** 사람이 끌어서 옮겨 저장한 카드 위치. 없는 공정은 자동 배치 */
   positions: Record<string, { x: number; y: number }>;
+  /** Jira 연결 설정과 마지막 조회(템플릿·체험 모드는 enabled: false) */
+  jira: ProjectJiraDto;
 }
 
 /** 담당자로 고를 수 있는 사람(활성 사용자) */
@@ -163,6 +167,13 @@ export type ErrorCode =
   | 'UNAUTHENTICATED'
   | 'FORBIDDEN'
   | 'RATE_LIMITED'
+  | 'JIRA_NOT_CONFIGURED'
+  | 'JIRA_TOKEN_REQUIRED'
+  | 'JIRA_AUTH'
+  | 'JIRA_UNAVAILABLE'
+  | 'JIRA_REJECTED'
+  | 'JIRA_TRANSITION'
+  | 'JIRA_CHANGED'
   | 'TRIAL_SESSION_REQUIRED'
   | 'INTERNAL';
 
@@ -177,6 +188,8 @@ export interface UserDto {
   active: boolean;
   createdAt: string;
   lastLoginAt: string | null;
+  /** 짝지은 Jira 사용자(name). Jira 토큰을 등록하면 채워지고, 관리자가 정할 수도 있다 */
+  jiraName: string | null;
 }
 
 /** 지금 요청한 사람. 웹 세션이면 csrfToken이, 토큰이면 token이 있다. */
@@ -235,4 +248,73 @@ export interface Problem {
   parentIds?: (string | null)[];
   /** HAS_DEPENDENCIES: 남아 있는 연결 */
   dependencies?: Edge[];
+  /** JIRA_UNAVAILABLE: 시간 초과였는지(만들기는 '결과 미확인'으로 둔다) */
+  timeout?: boolean;
+  /** JIRA_REJECTED: Jira의 HTTP 상태와 메시지 */
+  jiraStatus?: number;
+  jiraMessages?: string[];
+  /** JIRA_CHANGED: 지금 Jira에 있는 값. 확인한 뒤 jiraConfirm: true로 다시 보낸다 */
+  jira?: JiraValuesDto;
+}
+
+export type JiraStatusCategory = 'new' | 'indeterminate' | 'done';
+
+/** 연결된 공정에서 Jira가 원본인 값(상태·기한·담당자)을 Tevro 쪽 값으로 바꾼 것 */
+export interface JiraValuesDto {
+  key: string;
+  status: TaskStatus | null;
+  statusName: string;
+  deadline: string | null;
+  /** 짝지은 Tevro 사용자. 짝이 없으면 null이고 assigneeName에 Jira 표시 이름 */
+  assigneeId: string | null;
+  assigneeName: string | null;
+}
+
+/** 공정에 연결된 Jira 이슈(이 서버의 Jira 사이트 이슈일 때만). 마지막 조회 결과다 */
+export interface TaskJiraDto {
+  key: string;
+  url: string;
+  statusName: string | null;
+  statusCategory: JiraStatusCategory | null;
+  summary: string | null;
+  /** Jira 담당자 표시 이름(짝지은 Tevro 사용자가 없어도 보인다) */
+  assigneeName: string | null;
+  /** Jira 담당자가 Tevro 사용자와 짝지어지지 않았는지 */
+  assigneeUnmapped: boolean;
+  fetchedAt: string | null;
+  fetchedBy: string | null;
+  /** 마지막 조회에서 이 이슈만 실패했으면 그 이유 */
+  error: string | null;
+}
+
+/** 프로젝트의 Jira 연결 설정과 마지막 조회. 서버에 Jira가 없으면 enabled: false */
+export interface ProjectJiraDto {
+  enabled: boolean;
+  siteUrl: string | null;
+  projectKey: string | null;
+  issueTypeId: string | null;
+  issueTypeName: string | null;
+  /** Tevro 상태 → Jira 상태(Tevro에서 바꿀 때 이 상태로 옮긴다) */
+  statusMap: Partial<Record<TaskStatus, { id: string; name: string }>>;
+  /** 선후관계를 남길 링크 유형 이름. 없으면 링크를 만들지 않는다 */
+  linkType: string | null;
+  lastRefreshAt: string | null;
+  lastRefreshBy: string | null;
+  lastRefreshError: string | null;
+}
+
+/** 내 Jira 연결(개인 액세스 토큰). 토큰 값은 주지 않는다 */
+export interface JiraTokenStatusDto {
+  /** 서버에 Jira 사이트가 설정됐는지 */
+  enabled: boolean;
+  siteUrl: string | null;
+  /** 서버에 비밀키가 있어 토큰을 저장할 수 있는지 */
+  storage: boolean;
+  connected: boolean;
+  jiraName: string | null;
+  jiraDisplayName: string | null;
+  registeredAt: string | null;
+  lastUsedAt: string | null;
+  /** 저장한 토큰을 풀 수 없을 때(서버 비밀키가 바뀜) */
+  problem: string | null;
 }
